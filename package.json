@@ -1,0 +1,29 @@
+{
+  "name": "qoder-sky-games",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "像素游戏厅：Vue 3 + Vite 的多游戏合集，手机 / 平板 / PC 三端自适应",
+  "scripts": {
+    "start": "node scripts/dev.mjs start",
+    "dev": "node scripts/dev.mjs start",
+    "stop": "node scripts/dev.mjs stop",
+    "restart": "node scripts/dev.mjs restart",
+    "status": "node scripts/dev.mjs status",
+    "logs": "node scripts/dev.mjs logs",
+    "build": "vite build",
+    "preview": "node scripts/dev.mjs start preview",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "vue": "3.5.13",
+    "vue-router": "4.4.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "5.2.1",
+    "vite": "5.4.11"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

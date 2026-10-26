@@ -1,0 +1,67 @@
+name: 部署到 GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# deploy-pages 需要写 Pages 与 OIDC token；contents 只读
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一次发布，构建阶段可以取消上一次未完成的
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 测试并构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 与项目 engines 和本机系统 Node 对齐
+          node-version: 20
+          cache: npm
+
+      # 仓库名默认就是项目站前缀 /<仓库>/；托管到 <用户>.github.io 时
+      # 在仓库 Settings → Secrets and variables → Actions 里把 SITE_BASE 设为 /
+      - name: 计算站点前缀
+        env:
+          SITE_BASE: ${{ vars.SITE_BASE }}
+        run: |
+          if [ -n "$SITE_BASE" ]; then
+            echo "VITE_BASE=$SITE_BASE" >> "$GITHUB_ENV"
+          else
+            echo "VITE_BASE=/${{ github.event.repository.name }}/" >> "$GITHUB_ENV"
+          fi
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 单元测试（引擎层 + 存储层）
+        run: npm test
+
+      - name: 生产构建
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+          if-no-files-found: error
+
+  deploy:
+    name: 发布
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

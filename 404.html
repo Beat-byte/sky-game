@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1220" />
+    <title>像素游戏厅</title>
+    <script>
+      // 纯静态托管（GitHub Pages）没有服务端 SPA 回退：刷新或分享 /game/tetris 会命中这个 404 页。
+      // 这里不渲染任何内容，只把原始路径交给站点根，由 vue-router 接手还原成真实路由。
+      (function () {
+        var base = "%GHPAGES_BASE_URL%";
+        // 构建时注入的前缀和实际访问路径不符（例如换成了用户根站点）就退回站点根，避免来回跳转
+        if (location.pathname.indexOf(base) !== 0) base = "/";
+        var target = location.pathname.slice(base.length - 1) + location.search + location.hash;
+        if (target.charAt(0) !== "/") target = "/" + target;
+        location.replace(base + "?r=" + encodeURIComponent(target));
+      })();
+    </script>
+  </head>
+  <body>
+    <p>正在进入像素游戏厅…</p>
+    <noscript>本站是单页应用，需要启用 JavaScript 才能游玩。</noscript>
+  </body>
+</html>
