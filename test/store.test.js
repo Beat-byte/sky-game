@@ -1,9 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createStore, RECORD_LIMIT } from "../src/services/store.js";
+import {
+  createStore,
+  RECORD_LIMIT,
+  SAVE_SCHEMA_VERSION,
+  SCHEMA_VERSION,
+} from "../src/services/store.js";
+import { EMPTY_SAVE, START_WALLET } from "../src/games/delta/economy.js";
 
 const KEY = "sky-games:game:breakout";
 const GLOBAL_KEY = "sky-games:global";
+const SAVE_KEY = "sky-games:save:delta";
 const LEGACY = { breakout: "pixel-breakout-best" };
 
 function fakeStorage(initial = {}) {
@@ -13,6 +20,9 @@ function fakeStorage(initial = {}) {
     getItem: (key) => (map.has(key) ? map.get(key) : null),
     setItem: (key, value) => {
       map.set(key, String(value));
+    },
+    removeItem: (key) => {
+      map.delete(key);
     },
   };
 }
@@ -149,4 +159,93 @@ test("没有 localStorage 的环境（如 Node）不抛异常，全程走内存"
   assert.equal(store.commitRun("breakout", run()), 800);
   store.setPref("muted", true);
   assert.deepEqual(store.readPrefs(), { muted: true });
+});
+
+/* ---------------- 局外存档键域（sky-games:save:<id>） ---------------- */
+
+test("存档与成绩、偏好三个键域互不牵连", () => {
+  const storage = fakeStorage();
+  const store = createStore({ storage, legacyKeys: {} });
+  store.writeSave("delta", { ...EMPTY_SAVE, wallet: 500 });
+  assert.deepEqual([...storage.map.keys()], [SAVE_KEY], "写存档不该碰成绩或偏好键");
+
+  store.commitRun("breakout", run());
+  const save = store.readSave("delta", EMPTY_SAVE);
+  assert.equal(save.wallet, 500, "落成绩不能把刚写的存档抹掉");
+  assert.equal(store.readGame("breakout").best, 800);
+  assert.notEqual(JSON.parse(storage.map.get(KEY)).v, undefined, "成绩文档照旧带自己的 v");
+});
+
+test("两个 schema 版本号都还是 1，老战绩原样读出", () => {
+  assert.equal(SCHEMA_VERSION, 1, "动它等于把所有老用户的最高分清零");
+  assert.equal(SAVE_SCHEMA_VERSION, 1);
+  const legacyDoc = { v: 1, best: 4321, plays: 7, records: [{ at: 1, score: 4321, level: 3, won: false, ms: 1000, outcome: "over" }] };
+  const store = createStore({ storage: fakeStorage({ [KEY]: JSON.stringify(legacyDoc) }), legacyKeys: {} });
+  const profile = store.readGame("breakout");
+  assert.deepEqual(profile.records, legacyDoc.records);
+  assert.equal(profile.best, 4321);
+  assert.equal(profile.plays, 7);
+});
+
+test("存档缺字段时按 defaults 补齐，已有字段保留", () => {
+  const storage = fakeStorage({ [SAVE_KEY]: JSON.stringify({ v: 1, wallet: 880, xp: 500 }) });
+  const save = createStore({ storage, legacyKeys: {} }).readSave("delta", EMPTY_SAVE);
+  assert.equal(save.wallet, 880);
+  assert.equal(save.xp, 500);
+  assert.equal(save.stash.slots, EMPTY_SAVE.stash.slots, "这版新加的字段要从 defaults 补进来");
+  assert.deepEqual(save.stats, EMPTY_SAVE.stats);
+  assert.deepEqual(save.loadout, EMPTY_SAVE.loadout);
+});
+
+test("脏存档一律回落 defaults，不把页面搞崩", () => {
+  for (const raw of ["", "不是 JSON", "{", "null", "[]", '{"v":99,"wallet":7}', '{"wallet":9}']) {
+    const store = createStore({ storage: fakeStorage({ [SAVE_KEY]: raw }), legacyKeys: {} });
+    assert.equal(store.readSave("delta", EMPTY_SAVE).wallet, START_WALLET, `脏数据 ${raw} 应回落到初始钱包`);
+    assert.equal(store.isAvailable(), true, "读坏不该把整个存储层判死");
+  }
+});
+
+test("readSave 交回深拷贝，writeSave 由存储层盖版本戳", () => {
+  const storage = fakeStorage();
+  const store = createStore({ storage, legacyKeys: {} });
+  store.writeSave("delta", { ...EMPTY_SAVE, wallet: 1200 });
+
+  const snapshot = store.readSave("delta", EMPTY_SAVE);
+  assert.equal(snapshot.v, SAVE_SCHEMA_VERSION, "调用方不该自己填 v");
+  snapshot.stash.items.push({ key: "ghost", qty: 1 });
+  snapshot.loadout.primary = "stolen";
+
+  const reread = store.readSave("delta", EMPTY_SAVE);
+  assert.deepEqual(reread.stash.items, EMPTY_SAVE.stash.items, "改快照不能污染缓存");
+  assert.equal(reread.stash.items.some((item) => item.key === "ghost"), false, "脏改动不能回流");
+  assert.equal(reread.loadout.primary, null);
+  assert.deepEqual(JSON.parse(storage.map.get(SAVE_KEY)).stash.items, EMPTY_SAVE.stash.items);
+});
+
+test("存档写不进去时退回内存副本并广播，成绩路径不受牵连", () => {
+  const store = createStore({ storage: hostileStorage(), legacyKeys: LEGACY });
+  let notified = 0;
+  store.subscribe(() => {
+    notified += 1;
+  });
+  assert.equal(store.isAvailable(), false);
+  store.writeSave("delta", { ...EMPTY_SAVE, wallet: 77 });
+  assert.equal(store.readSave("delta", EMPTY_SAVE).wallet, 77, "内存副本继续可用");
+  assert.equal(store.commitRun("breakout", run()), 800);
+  assert.equal(store.readGame("breakout").best, 800);
+  assert.equal(notified, 2, "存档与成绩各广播一次数据变更，而「存储不可用」不再重复广播");
+});
+
+test("clearSave 之后回到 defaults，且跨实例等同刷新能读回", () => {
+  const storage = fakeStorage();
+  const store = createStore({ storage, legacyKeys: {} });
+  store.writeSave("delta", { ...EMPTY_SAVE, wallet: 3300, xp: 1000 });
+  const reopened = createStore({ storage, legacyKeys: {} });
+  const reread = reopened.readSave("delta", EMPTY_SAVE);
+  assert.equal(reread.wallet, 3300);
+  assert.equal(reread.xp, 1000);
+
+  reopened.clearSave("delta");
+  assert.equal(storage.map.has(SAVE_KEY), false, "键要真的删掉，否则下次刷新又回来了");
+  assert.equal(reopened.readSave("delta", EMPTY_SAVE).wallet, START_WALLET);
 });

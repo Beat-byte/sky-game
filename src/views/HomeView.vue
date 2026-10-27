@@ -13,7 +13,7 @@ const device = useDevice();
       <h1>选一个开始</h1>
       <p class="muted">
         当前识别为<strong>{{ DEVICE_LABEL[device.device] }} · {{ device.orientation === "portrait" ? "竖屏" : "横屏" }}</strong>，
-        布局、控件尺寸与下落速度会按档位重新计算；每个游戏的格子数恒定，三端难度一致。
+        布局与控件尺寸会按档位重新计算；格子类游戏的行列数恒定，战术撤离的可视范围恒为 28×18 米 —— 三端难度一致。
       </p>
       <ul class="tips">
         <li><span class="chip">手机</span> 单指拖动或滑动操作，按钮不小于 48 px</li>
@@ -94,7 +94,7 @@ const device = useDevice();
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* 手机竖屏一列、平板两列、桌面三列，避免卡片被压成细长条 */
+/* 手机竖屏一列、平板两列、桌面按宽度自动铺满（四款游戏时不至于挤出第三列的孤条） */
 html[data-device="phone"] .grid {
   grid-template-columns: 1fr;
 }
@@ -104,7 +104,7 @@ html[data-device="tablet"] .grid {
 }
 
 html[data-device="desktop"] .grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
 }
 
 html[data-device="phone"][data-orientation="landscape"] .grid {

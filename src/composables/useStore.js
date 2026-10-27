@@ -38,3 +38,22 @@ export function useStorageAvailable() {
     return store.isAvailable();
   });
 }
+
+/**
+ * 局外存档（仓库/货币/配装这类跨局资产）。
+ * defaults 必须是模块级常量：它在 computed 里参与读档，传字面量会让缓存判断失义。
+ * save 是只读快照——改完要 write，否则刷新就丢；写盘同样通过 tick 让 save 重算。
+ */
+export function useGameSave(id, defaults) {
+  const available = useStorageAvailable();
+  const save = computed(() => {
+    void tick.value;
+    return store.readSave(id, defaults);
+  });
+  return {
+    save,
+    write: (doc) => store.writeSave(id, doc),
+    reset: () => store.clearSave(id),
+    available,
+  };
+}

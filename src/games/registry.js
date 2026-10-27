@@ -36,6 +36,16 @@ export const GAMES = [
     status: "ready",
     load: () => import("./snake/SnakeView.vue"),
   },
+  {
+    id: "delta",
+    name: "危险行动",
+    subtitle: "搜刮—交火—撤离：恒定 28×18 米视野，阵亡丢掉身上的一切，只有保险箱留得住。",
+    tags: ["战术撤离", "搜打撤", "跨局成长"],
+    mark: "危",
+    accent: "#f0b072",
+    status: "ready",
+    load: () => import("./delta/DeltaView.vue"),
+  },
 ];
 
 export function findGame(id) {

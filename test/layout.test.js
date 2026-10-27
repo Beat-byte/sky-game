@@ -15,6 +15,9 @@ import {
   metricsFor,
   orientation,
 } from "../src/games/breakout/layout.js";
+// 弹球与方块都导出同名的 FIELD/applyField/canvasBox/fieldSize/metricsFor，
+// delta 用命名空间别名，否则下面的弹球断言会被顶掉。
+import * as DL from "../src/games/delta/layout.js";
 
 test("三种设备档位按视口尺寸划分", () => {
   // 手机：iPhone 15 / 15 Pro Max / 小屏安卓
@@ -177,4 +180,110 @@ test("旋转到竖屏后重排：保留砖块损伤、小球按高度比例平�
   assert.ok(ball.x >= 0 && ball.x + ball.w <= FIELD.width);
 
   applyField({ width: BASE_WIDTH, height: 600 }, "desktop");
+});
+
+/* ---------------- delta「危险行动」：连续世界用「逻辑视口恒定」表达同一条铁律 ---------------- */
+
+const DL_WORLD = { width: 44, height: 30 };
+
+test("delta 逻辑视口恒定 28×18 m，只由朝向决定、与容器尺寸无关", () => {
+  assert.deepEqual(DL.fieldFor("portrait"), { width: 432, height: 672 });
+  assert.deepEqual(DL.fieldFor("landscape"), { width: 672, height: 432 });
+  for (const dir of ["portrait", "landscape"]) {
+    const field = DL.fieldFor(dir);
+    const meters = DL.viewMeters(field);
+    assert.equal(meters.width * meters.height, 504, `${dir} 可见面积必须恒 504 m²`);
+    assert.equal(Math.max(meters.width, meters.height), DL.VIEW.long);
+    assert.equal(Math.min(meters.width, meters.height), DL.VIEW.short);
+  }
+  // 同朝向、容器差别悬殊的两档"可用空间"必须拿到完全一样的场地——这是与方块 fieldSize 的分水岭
+  const phonePortrait = DL.computeLayout({ width: 390, height: 844 }, { width: 300, height: 420 });
+  const tabletPortrait = DL.computeLayout({ width: 820, height: 1180 }, { width: 700, height: 900 });
+  assert.deepEqual(phonePortrait.field, tabletPortrait.field);
+  const tabletLandscape = DL.computeLayout({ width: 1180, height: 820 }, { width: 900, height: 400 });
+  const desktopLandscape = DL.computeLayout({ width: 2560, height: 1440 }, { width: 2400, height: 1300 });
+  assert.deepEqual(tabletLandscape.field, desktopLandscape.field);
+  assert.deepEqual(tabletLandscape.field, { width: 672, height: 432 }, "横屏长边在横向");
+  assert.deepEqual(DL.fieldSize({ width: 0, height: 0 }), DL.fieldFor("portrait"), "容器塌陷时按竖屏兜底，不能出 NaN");
+  assert.ok(Number.isFinite(DL.canvasBox(phonePortrait, { width: 0, height: 0 }).width), "0×0 容器也不能返回 NaN");
+});
+
+test("delta 画布在三端等比内接，且看到的米数完全一致", () => {
+  const cases = [
+    { viewport: { width: 390, height: 844 }, available: { width: 366, height: 560 }, dir: "portrait" },
+    { viewport: { width: 1180, height: 820 }, available: { width: 900, height: 400 }, dir: "landscape" },
+    { viewport: { width: 1440, height: 900 }, available: { width: 1100, height: 700 }, dir: "landscape" },
+    { viewport: { width: 820, height: 1180 }, available: { width: 700, height: 900 }, dir: "portrait" },
+  ];
+  for (const item of cases) {
+    const layout = DL.computeLayout(item.viewport, item.available);
+    assert.equal(layout.orientation, item.dir);
+    const canvas = DL.canvasBox(layout, item.available);
+    assert.ok(canvas.width <= item.available.width + 1, `${item.dir} 画布横向溢出容器`);
+    assert.ok(canvas.height <= item.available.height + 1, `${item.dir} 画布纵向溢出容器`);
+    assert.ok(Math.abs(canvas.width / canvas.height - layout.aspect) < 0.01, "画布必须等比内接，不能被拉扁");
+    const meters = DL.viewMeters(layout.field);
+    assert.deepEqual(
+      { width: Math.max(meters.width, meters.height), height: Math.min(meters.width, meters.height) },
+      { width: DL.VIEW.long, height: DL.VIEW.short },
+      `${item.viewport.width}×${item.viewport.height} 看到的战场变了`
+    );
+  }
+});
+
+test("delta 的 metricsFor 只给装饰量，玩法量一律不随设备变", () => {
+  const decorative = new Set([
+    "device", "field", "pxPerM", "viewMeters", "outlineWidth", "hairline", "fontSize", "hudFontSize",
+    "padRadius", "padHandleRadius", "minimapSize", "minimapPadding", "glowWidth",
+  ]);
+  const perDevice = {};
+  for (const device of ["phone", "tablet", "desktop"]) {
+    const metrics = DL.metricsFor(DL.fieldFor("portrait"), device);
+    perDevice[device] = metrics;
+    for (const key of Object.keys(metrics)) {
+      assert.ok(decorative.has(key), `metricsFor 里多出 ${key}：往这里塞米/秒/伤害就等于把难度按设备分档`);
+    }
+    assert.equal(metrics.pxPerM, DL.PX_PER_M);
+    assert.deepEqual(metrics.viewMeters, DL.viewMeters(DL.fieldFor("portrait")));
+  }
+  assert.ok(
+    perDevice.phone.outlineWidth > perDevice.desktop.outlineWidth,
+    "手机每米像素更少，只能用更粗的描边补可读性（装饰路径）"
+  );
+  assert.ok(perDevice.phone.fontSize > perDevice.desktop.fontSize);
+});
+
+test("delta 相机夹在图内、bias 只挪相机不缩视野，裁剪窗口不越图", () => {
+  const field = DL.fieldFor("landscape");
+  assert.deepEqual(DL.cameraFor({ x: 0, y: 0 }, field, DL_WORLD), { x: 0, y: 0 }, "左上角不露出图外");
+  assert.deepEqual(DL.cameraFor({ x: 44, y: 30 }, field, DL_WORLD), { x: 16, y: 12 }, "右下角夹在图边");
+  assert.deepEqual(DL.cameraFor({ x: 22, y: 15 }, field, DL_WORLD), { x: 8, y: 6 });
+
+  const plain = DL.cameraFor({ x: 22, y: 10 }, field, DL_WORLD);
+  const biased = DL.cameraFor({ x: 22, y: 10 }, field, DL_WORLD, { biasM: DL.HUD_BIAS_M });
+  assert.equal(biased.x, plain.x, "HUD 偏移不能横向挪相机");
+  assert.equal(biased.y, plain.y + DL.HUD_BIAS_M, "偏移量以米计，且只改相机位置");
+  assert.equal(DL.viewMeters(field).width * DL.viewMeters(field).height, 504, "带偏移后可见面积仍恒 504 m²");
+  assert.ok(biased.y + DL.viewMeters(field).height <= DL_WORLD.height, "带偏移后仍不能露出图外");
+
+  for (const target of [{ x: 1, y: 1 }, { x: 22, y: 15 }, { x: 43, y: 29 }]) {
+    const camera = DL.cameraFor(target, field, DL_WORLD);
+    const window = DL.visibleWindow(camera, field, DL_WORLD);
+    assert.ok(window.x0 >= 0 && window.y0 >= 0 && window.x1 <= DL_WORLD.width - 1 && window.y1 <= DL_WORLD.height - 1);
+    assert.ok((window.x1 - window.x0 + 1) * DL.PX_PER_M >= field.width, "裁剪窗口必须盖满视口，否则边上会缺画");
+    assert.ok((window.y1 - window.y0 + 1) * DL.PX_PER_M >= field.height);
+    const spot = DL.screenToWorld({ x: field.width / 2, y: field.height / 2 }, camera);
+    assert.deepEqual(DL.worldToScreen(spot, camera), { x: field.width / 2, y: field.height / 2 }, "屏幕↔世界换算必须可逆");
+  }
+
+  // 单位契约：camera 以米为单位，米→像素只许在 worldToScreen 里乘一次 PX_PER_M。
+  // 曾经写成 point.x * PX_PER_M - camera.x，两种单位混着减，越界一个像素都算渲染错位。
+  const zero = { x: 0, y: 0 };
+  assert.deepEqual(DL.worldToScreen({ x: 1, y: 2 }, zero), { x: DL.PX_PER_M, y: 2 * DL.PX_PER_M });
+  assert.deepEqual(DL.screenToWorld({ x: DL.PX_PER_M, y: 2 * DL.PX_PER_M }, zero), { x: 1, y: 2 });
+  const mid = DL.cameraFor({ x: 22, y: 15 }, field, DL_WORLD);
+  assert.deepEqual(DL.worldToScreen({ x: mid.x, y: mid.y }, mid), zero, "相机原点必须落在画布左上角");
+  assert.deepEqual(DL.worldToScreen({ x: mid.x + 2, y: mid.y + 1 }, mid), { x: 2 * DL.PX_PER_M, y: DL.PX_PER_M });
+  const edge = DL.visibleWindow(DL.cameraFor({ x: 43, y: 29 }, field, DL_WORLD), field, DL_WORLD);
+  assert.deepEqual(edge, { x0: 16, y0: 12, x1: 43, y1: 29 }, "裁剪窗口格号必须由米直接取整");
 });
