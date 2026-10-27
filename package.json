@@ -12,6 +12,7 @@
     "status": "node scripts/dev.mjs status",
     "logs": "node scripts/dev.mjs logs",
     "build": "vite build",
+    "icons": "node scripts/gen-icons.mjs",
     "preview": "node scripts/dev.mjs start preview",
     "test": "node --test"
   },

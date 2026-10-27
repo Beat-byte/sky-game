@@ -46,10 +46,13 @@
 - 服务与端口：`npm run dev` → Vite dev（默认 5173）；`npm run build && npm run preview` → 预览 dist
   （默认 4173）。两者都由 `scripts/dev.mjs` 托管，`stop/status/logs` 同样走它；模式记录在
   `.dev-server.json`。Vite 响应头 `X-Sky-Games: <pid>` 用于启停脚本自检，勿删。
-- **静态托管（GitHub Pages）的三个耦合点，改动前先看这里**：
+- **静态托管（GitHub Pages）的四个耦合点，改动前先看这里**：
   1. `vite.config.js` 用 `VITE_BASE` 算 `base`（本地不注入即 `/`），路由必须
      `createWebHistory(import.meta.env.BASE_URL)`；页面与组件里**不得出现 `/assets/...`、
      `href="/..."` 这类根绝对路径**，跳转一律 `<RouterLink :to="{ name: ... }">`。
+     **唯一例外**是 HTML 里指向 `public/` 的资源（站点图标）：那种 `href="/favicon.svg"` 必须写根相对路径，
+     Vite 构建时按 `base` 重写（已实测 `dist/index.html` 与 `dist/404.html` 都变成 `/前缀/favicon.svg`），
+     手写 `%BASE_URL%` 或挪进 `src/` 反而是错的。
   2. `404.html` 是**第二个 rollup 入口**（`build.rollupOptions.input.fallback`），靠同名插件的
      `transformIndexHtml` 把 `%GHPAGES_BASE_URL%` 换成真实前缀。删掉这个 input 或改占位符名，
      发布产物就没有 SPA 回退。别把 404.html 放进 `public/`——那里头的文件不会被 Vite 处理，
@@ -58,14 +61,20 @@
      `src/router/index.js` 必须在 **`createRouter` 之前**用 `history.replaceState` 还原地址栏
      （`createWebHistory` 在创建的那一瞬间就读走了 `window.location`，晚了就来不及）；
      还原时要校验路径以单个 `/` 开头且只含 `[\w\-./]`，防开放重定向。
+  4. 站点图标是**生成物**：`scripts/gen-icons.mjs` 里那张 16×16 像素矩阵是唯一真实来源，
+     `public/favicon.svg`、`public/favicon.png`(48)、`public/apple-touch-icon.png`(192) 由它产出并提交进仓库。
+     改图案只改矩阵再跑 `npm run icons`，**不要手改产物**（`test/icons.test.js` 会把已提交产物与矩阵对拍）。
+     PNG 是 Node 内置 `zlib` 手写编码的（本机只有 `sips`，不能栅格化 SVG 也不能出 ICO，所以不做 `.ico`）；
+     尺寸必须是 16 的整数倍，`apple-touch-icon` 必须是实心背景（iOS 把透明填黑）。
   - `.github/workflows/deploy.yml` 按 `github.event.repository.name` 推导前缀，托管到用户根站点时
     改用仓库变量 `SITE_BASE=/`。`npm ci` 已实测可用（lockfile 根条目仍写着 v1 的
     `qoder-breakout` 名字，npm 不校验该项；要改就重新生成 lock，注意 npm 10.8.2 的 arborist 缺陷）。
   - 验证托管要在本地起一个**无 SPA 回退**的静态服务器（未命中返回 404.html + 404 状态码），
     Pages 不会替你回退；直接 `npm run preview` 会因 Vite 的 spa 回退而掩盖问题，测不出深链接。
-- `node --test` 覆盖三款游戏的引擎层与存储层（81 个用例：`game`/`physics`/`layout` 弹球 31、
-  `snake` 18、`tetris` 21、`store` 11）；改几何/度量要同步 `test/layout.test.js` 的档位期望值，
-  改存储结构要同步 `test/store.test.js` 并递增 `SCHEMA_VERSION`（否则老用户数据会被当空档）。
+- `node --test` 覆盖三款游戏的引擎层、存储层与图标生成器（87 个用例：`game`/`physics`/`layout` 弹球 31、
+  `snake` 18、`tetris` 21、`store` 11、`icons` 6）；改几何/度量要同步 `test/layout.test.js` 的档位期望值，
+  改存储结构要同步 `test/store.test.js` 并递增 `SCHEMA_VERSION`（否则老用户数据会被当空档），
+  改像素矩阵要跑 `npm run icons` 重新提交产物，否则 `icons` 第 5 例直接红。
 - 生产构建里 `import.meta.env.DEV` 为假，调试入口只存在于 dev：弹球 `window.game`/`window.layout`/
   `window.relayout`，贪吃蛇 `window.snake`/`window.snakeLayout`/`window.snakeRelayout`，
   方块堆叠 `window.tetris`/`window.tetrisLayout`/`window.tetrisRelayout`。在浏览器里驱动游戏做回归，

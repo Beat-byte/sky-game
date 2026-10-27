@@ -17,7 +17,7 @@ Vue 3 + Vite 的单页应用：首页汇总所有游戏，点卡片进入对应�
 | 开发服务 | **5173** → http://localhost:5173（`npm run dev`；被占用自动顺延端口） |
 | 预览服务 | **4173** → http://localhost:4173（`npm run build && npm run preview`，同样被占用则顺延） |
 | 运行记录 | `.dev-server.json`（模式、进程号、端口、地址），日志 `.dev-logs/server.log` |
-| 单元测试 | `npm test`（Node 内置 `node --test`，81 个用例：三款游戏的引擎层 + 存储层，全部与框架无关） |
+| 单元测试 | `npm test`（Node 内置 `node --test`，87 个用例：三款游戏的引擎层 + 存储层 + 站点图标生成器，全部与框架无关） |
 | 生产体积 | 首页入口 `index.js` gzip 38.41 kB（含 vue + vue-router）；三款游戏各自独立分包：弹球 9.29 kB、贪吃蛇 6.88 kB、方块堆叠 9.45 kB |
 | 玩家数据 | 浏览器本地 `localStorage`（键前缀 `sky-games:`）：最高分、累计局数、最近 20 局战绩、静音等偏好 |
 | 静态托管 | GitHub Pages（`actions/deploy-pages`）；站点前缀由 `VITE_BASE` 注入，`dist/404.html` 充当 SPA 回退。见「静态托管到 GitHub Pages」 |
@@ -74,7 +74,8 @@ npm run stop       # 关闭
 npm run restart    # 重启
 npm run status     # 地址、端口、进程号、模式
 npm run logs       # 最近 30 行日志
-npm test           # node --test test/，81 个用例（三款游戏引擎层 + 存储层）
+npm test           # node --test test/，87 个用例（三款游戏引擎层 + 存储层 + 图标生成器）
+npm run icons      # 改了 scripts/gen-icons.mjs 的像素矩阵后，重新生成 public/ 里三个图标
 ```
 
 底层等价命令：`node scripts/dev.mjs <start|stop|restart|status|logs|preview> [--port 5173]`。
@@ -176,7 +177,7 @@ speedScale = height / 600        → 垂直穿越时间恒定
 | 项目站挂在 `https://<用户>/<仓库>/` 子路径 | 产物里写 `/assets/xxx.js` → 打到域名根 → **白屏** | `vite.config.js` 读 `VITE_BASE` 决定 `base`；`createWebHistory(import.meta.env.BASE_URL)` |
 | Pages 没有服务端 SPA 回退 | 刷新或分享 `.../game/tetris` → **404** | 构建时额外产出 `dist/404.html`，把原始路径塞进 `?r=` 跳回站点根，路由在建 history 前还原 |
 
-发布走 `.github/workflows/deploy.yml`：`npm ci` → `npm test`（81 例） → `npm run build` →
+发布走 `.github/workflows/deploy.yml`：`npm ci` → `npm test`（87 例） → `npm run build` →
 `actions/upload-pages-artifact` + `actions/deploy-pages`。站点前缀按仓库名自动推导
 （`${{ github.event.repository.name }}`），**改仓库名或换托管位置都不用改代码**：
 
@@ -197,15 +198,46 @@ speedScale = height / 600        → 垂直穿越时间恒定
 两个已知代价：**成绩按 origin 隔离**，从 `localhost` 换到 Pages 域名等于从零开始（本地数据不会跟过去）；
 以及托管地址是 `github.io`，国内访问不稳定，要稳定得自备域名或换国内托管。
 
+## 站点图标
+
+标签页、书签、iOS 主屏那颗手柄图标来自**一张 16×16 像素矩阵**（写在 `scripts/gen-icons.mjs` 里），
+`public/` 下三个文件全是它的生成物：改图案只改矩阵，然后 `npm run icons`，不要直接编辑产物
+（`test/icons.test.js` 有一例专门把已提交产物和当前矩阵对拍，忘了重新生成就会红）。
+
+| 产物 | 尺寸 | 背景 | 给谁用 |
+| --- | --- | --- | --- |
+| `favicon.svg` | 16 格 viewBox，同行同色游程合并成 48 个 `<rect>`，`shape-rendering="crispEdges"` | 透明 | Chrome / Firefox / Edge / Safari 标签页 |
+| `favicon.png` | 48×48（×3） | 透明 | 不支持 SVG favicon 的浏览器兜底 |
+| `apple-touch-icon.png` | 192×192（×12） | **实心** `#0b1220` | iOS「添加到主屏幕」——Apple 不吃 SVG，透明区还会填黑 |
+
+取色全部对齐 `src/styles/base.css`：描边 `--text-muted`、机身 `--panel`、握把 `--bg-soft`、
+十字键 `--accent`、两枚按键 `--accent-2` 与 `--warn`。上下各留两行、左右各留一列空白，
+所以任何圆形或圆角遮罩都切不到轮廓。
+
+两处实现要点：
+- PNG 用 Node 内置 `zlib` 手写编码（8-bit RGBA、非隔行、每扫描线 filter 0 + 自带 CRC32），**没装任何图像依赖**；
+  尺寸取 16 的整数倍，最近邻放大不会半像素抖动。`sips -g pixelWidth` 能读出 48 与 192，是这台机器上唯一可用的独立校验。
+- HTML 里写的是根相对路径 `/favicon.svg`。子路径托管**不会 404**：Vite 在构建时按 `base` 重写 `link[href]`
+  指向 public 资源（`404.html` 作为第二个入口同样生效）。所以不要手写 `%BASE_URL%`，那是 404 页里
+  `%GHPAGES_BASE_URL%`（给 JS 常量用的）的另一套机制。
+
+诚实清单：**没有 `.ico`**（只有 legacy IE 需要，而本机无任何 ICO 校验手段，手搓容器属于无法验证的风险）；
+**没有 `mask-icon`**（Safari 固定标签页的老机制）；**没有 PWA manifest**。标签页上的实际观感需要人眼确认——
+内置浏览器 `visibilityState` 为 hidden，截不了图。
+
 ## 目录结构
 
 ```
-index.html                       Vue 入口外壳（含 data-device 初值与安全区 meta）
+index.html                       Vue 入口外壳（含 data-device 初值、安全区 meta、三条图标 link）
 404.html                         GitHub Pages 的 SPA 回退页（第二个 HTML 入口，构建时注入站点前缀）
 public/.nojekyll                 关掉 Pages 的 Jekyll 处理，避免产物被误过滤
+public/favicon.svg               标签页图标（矢量，由脚本生成，不要手改）
+public/favicon.png               标签页图标位图兜底（48×48，透明背景，生成物）
+public/apple-touch-icon.png      iOS 主屏图标（192×192，实心深色底，生成物）
 vite.config.js                   plugin-vue + 站点 base + 身份响应头 + 端口策略
 .github/workflows/deploy.yml     push main → 测试 + 构建 + 发布到 Pages
 scripts/dev.mjs                  一键启停/状态/日志（dev 与 preview 两种模式）
+scripts/gen-icons.mjs            16×16 像素手柄矩阵 → 上面三个图标（图案的唯一真实来源）
 src/main.js                      装配 App 与路由
 src/App.vue                      外壳：顶栏 + 设备徽标 + <router-view>
 src/styles/base.css              色板 token、reset、.btn/.chip/kbd 等通用件
@@ -222,7 +254,7 @@ src/games/breakout/              游戏一「像素弹球」：BreakoutView.vue 
 src/games/snake/                 游戏二「像素贪吃蛇」：SnakeView.vue + game/grid/layout/renderer/input/audio
 src/games/tetris/                游戏三「方块堆叠」：TetrisView.vue + game/pieces/layout/renderer/input/audio
 src/utils/device.js              设备档位/朝向/视口测量
-test/                            单元测试（game / physics / layout / snake / tetris / store）
+test/                            单元测试（game / physics / layout / snake / tetris / store / icons）
 dist/                            构建产物（可删，接入版本库请 gitignore）
 ```
 
@@ -291,7 +323,7 @@ dist/                            构建产物（可删，接入版本库请 giti
 三款游戏共用的约定：
 
 - **逻辑与渲染分离**：`game.js` 不引用 DOM/WebAudio/localStorage/框架，因此单测与浏览器跑的是同一份代码，
-  无头模拟可直接用于平衡性检查（81 个用例全在 Node 里跑）。
+  无头模拟可直接用于平衡性检查（87 个用例全在 Node 里跑）。
 - **帧率无关**：主循环只把 `deltaSeconds` 交给引擎，由引擎内部换算——弹球用 `stepScale` 折算成 60 帧
   基准步长并封顶 3；贪吃蛇与方块堆叠用时间累加器，并对单帧 delta 设上限（蛇 0.2 s、方块 0.05 s），
   所以切后台再回来不会一帧扣掉半张棋盘。
