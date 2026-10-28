@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { RouterLink } from "vue-router";
 import { Snake } from "./game.js";
 import { MAX_TIER, SPEEDS } from "./grid.js";
 import { snakeLayout } from "./layout.js";
@@ -294,6 +295,7 @@ onBeforeUnmount(() => {
         <button class="btn" @click="togglePause">暂停</button>
         <button class="btn" @click="restart">重开</button>
         <button class="btn" @click="toggleSound">{{ soundLabel }}</button>
+        <RouterLink class="btn exit" :to="{ name: 'home' }">退出</RouterLink>
       </div>
 
       <p v-if="!storageOk" class="notice">本地存储写不进去（隐私模式或配额已满），本局成绩不会保存。</p>
@@ -443,6 +445,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+/* 出口只给手机端的全屏层用（页头的「← 游戏厅」会被盖住），桌面/平板照常收起 */
+.exit {
+  display: none;
+}
+
 .history {
   padding: 10px 12px;
   border: 1px solid var(--panel-edge);
@@ -566,26 +573,7 @@ html[data-device="tablet"][data-orientation="landscape"] .controls {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* 手机：屏高优先给画布，战绩与说明收起 */
-html[data-device="phone"] .playfield {
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-html[data-device="phone"] .btn {
-  min-height: 48px;
-}
-
-html[data-device="phone"] .dpad .btn {
-  min-height: 52px;
-}
-
-html[data-device="phone"][data-orientation="landscape"] .stats {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-html[data-device="phone"] .history,
-html[data-device="phone"] .guide {
-  display: none;
-}
+/* 手机端不在此处写规则：全屏层与压缩后的控制带由 src/styles/playfield.css 统一负责，
+   组件里再写一条 html[data-device="phone"] .X 会因为 scoped 属性把特异度顶到同一档，
+   后加载的异步 chunk 就会盖住公共层（上一版手机端画布只剩 194 px 宽的病根）。 */
 </style>

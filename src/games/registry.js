@@ -46,6 +46,16 @@ export const GAMES = [
     status: "ready",
     load: () => import("./delta/DeltaView.vue"),
   },
+  {
+    id: "birds",
+    name: "愤怒的小鸟",
+    subtitle: "拉弓—抛物—拆结构：六关手写战场，弹弓物理三端共用同一套米制。",
+    tags: ["弹射", "物理拆塔", "6 关卡"],
+    mark: "鸟",
+    accent: "#e6483c",
+    status: "ready",
+    load: () => import("./birds/BirdsView.vue"),
+  },
 ];
 
 export function findGame(id) {

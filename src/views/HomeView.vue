@@ -94,7 +94,7 @@ const device = useDevice();
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* 手机竖屏一列、平板两列、桌面按宽度自动铺满（四款游戏时不至于挤出第三列的孤条） */
+/* 手机竖屏一列、平板两列、桌面按宽度自动铺满（注册表加到五款也不会挤出落单的孤条） */
 html[data-device="phone"] .grid {
   grid-template-columns: 1fr;
 }

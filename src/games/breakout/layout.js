@@ -1,7 +1,7 @@
 /**
  * 三端适配的唯一真实来源：把视口与舞台容器尺寸换算成设备档位、逻辑场地与各处度量。
  *
- * 关键约定：逻辑场地按容器长宽比生成（高度 420..1200，宽度 800..1600），画布几乎铺满舞台；
+ * 关键约定：逻辑场地按容器长宽比生成（高度 420..1600，宽度 800..1600，长宽比地板 0.5），画布几乎铺满舞台；
  * 小球速度按高度同比放大，所以垂直穿越时间在手机、平板、PC 上保持一致，手感不会忽快忽慢。
  */
 
@@ -11,20 +11,26 @@ export { BREAKPOINTS, deviceClass, orientation };
 
 export const BASE_WIDTH = 800;
 export const MIN_HEIGHT = 420;
-export const MAX_HEIGHT = 1200;
+/**
+ * 场地最高档 1600：手机全屏后舞台长宽比约 0.52（388×753），
+ * 旧的 1200 上限配合 0.55 的长宽比地板会把画布锁在 800×1200（比例 0.667），
+ * 舞台上下各空出 86 px。放开到 1600 让画布真正铺满，speedScale 随之放大，
+ * 垂直穿越时间仍然恒定（见 metricsFor 的 speedScale）。
+ */
+export const MAX_HEIGHT = 1600;
 export const MAX_WIDTH = 1600;
 export const FIELD = { width: BASE_WIDTH, height: 600, hud: 54, device: "desktop" };
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
 /**
- * 逻辑场地：先由容器长宽比定高度（420..1200），再让宽度同比展开（800..1600），
+ * 逻辑场地：先由容器长宽比定高度（420..1600），再让宽度同比展开（800..1600），
  * 使画布几乎铺满容器；竖屏拿到瘦高场地，横屏拿到宽扁场地，不再两侧留白。
  */
 export function fieldSize(box) {
   // 舞台在首次布局或被折叠成 0 时按 4:3 兜底，避免除零产生 NaN 场地
   const safe = box.width > 0 && box.height > 0 ? box : { width: 4, height: 3 };
-  const a = clamp(safe.width / safe.height, 0.55, 3.4);
+  const a = clamp(safe.width / safe.height, 0.5, 3.4);
   const height = clamp(Math.round(BASE_WIDTH / a), MIN_HEIGHT, MAX_HEIGHT);
   const width = Math.round(clamp(a * height, BASE_WIDTH, MAX_WIDTH));
   return { width, height };

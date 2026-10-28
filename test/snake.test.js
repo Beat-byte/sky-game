@@ -342,3 +342,23 @@ test("snakeLayout 与 backingSize：极端容器不产生 NaN", () => {
   assert.ok(wide.cell <= wide.css.width / 20 + 1e-9);
   assert.deepEqual(backingSize({ width: 100, height: 50 }), { width: 100, height: 50, dpr: 1 });
 });
+
+/**
+ * 手机全屏层（src/styles/playfield.css）把统计条、方向盘、按钮排压成 235 px 的控制带，
+ * 舞台因此从旧的约 388×470 长到 388×607；横屏控制带改到右侧，舞台是 672×388。
+ * 这里钉住两件事：行列数恒定（难度不随之改变）与格子边长有地板（蛇身不许糊成一条线）。
+ */
+test("手机全屏：格子边长有地板，行列数不随舞台变高而改变", () => {
+  const up = snakeLayout({ width: 390, height: 844 }, { width: 388, height: 607 });
+  assert.equal(up.device, "phone");
+  assert.deepEqual([up.grid.cols, up.grid.rows], [13, 20]);
+  assert.ok(up.css.width <= 388 && up.css.height <= 607, "画布溢出舞台");
+  assert.ok(up.css.height >= 585, `画布只占 ${up.css.height} px，舞台高度被浪费`);
+  assert.ok(up.cell >= 28, `格子只有 ${up.cell.toFixed(1)} CSS px`);
+
+  const side = snakeLayout({ width: 844, height: 390 }, { width: 672, height: 388 });
+  assert.deepEqual([side.grid.cols, side.grid.rows], [20, 13], "横屏只互换长边，格子总数仍是 260");
+  assert.ok(side.css.width <= 672 && side.css.height <= 388, "横屏画布溢出舞台");
+  assert.ok(side.cell >= 28, `横屏格子只有 ${side.cell.toFixed(1)} CSS px`);
+  assert.ok(Math.abs(side.cell - up.cell) < 1, "横竖屏格子边长应当接近");
+});

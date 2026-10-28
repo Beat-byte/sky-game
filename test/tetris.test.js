@@ -560,3 +560,28 @@ test("三端度量：行列恒定 10×20，只有格子边长随场地缩放", (
   assert.equal(game.collides(game.current.matrix, game.current.x, game.current.y), false);
   applyField({ width: 600, height: 1000 }, "desktop");
 });
+
+/**
+ * 手机全屏层（src/styles/playfield.css）把控制带压到 169 px，竖屏舞台约 388×675，
+ * 横屏控制带换到右侧、舞台约 672×388。钉住：棋盘恒 10×20、画布吃满舞台高度、
+ * 竖屏格子边长有地板，且竖屏必须把预览交给 DOM 侧栏（场地留白不够在画布里画面板）。
+ */
+test("手机全屏：棋盘行列恒定，画布吃满舞台且格子够大", () => {
+  const box = { width: 388, height: 675 };
+  const up = computeLayout({ width: 390, height: 844 }, box);
+  assert.equal(up.device, "phone");
+  assert.equal(Math.round(up.metrics.boardWidth / up.metrics.cell), COLS);
+  assert.equal(Math.round(up.metrics.boardHeight / up.metrics.cell), ROWS);
+  assert.equal(up.metrics.showPanels, false, "竖屏留白不够，预览必须交给 DOM 侧栏");
+
+  const css = canvasBox(up, box);
+  assert.ok(css.width <= box.width + 1 && css.height <= box.height + 1, "画布溢出舞台");
+  assert.ok(css.height >= box.height - 2, `画布只占 ${css.height} px 高`);
+  const cellCss = (css.width * (up.metrics.boardWidth / up.field.width)) / COLS;
+  assert.ok(cellCss >= 30, `棋盘格子只有 ${cellCss.toFixed(1)} CSS px`);
+
+  const wide = computeLayout({ width: 844, height: 390 }, { width: 672, height: 388 });
+  assert.equal(Math.round(wide.metrics.boardWidth / wide.metrics.cell), COLS, "横屏可见列数也得是 10");
+  const wideCss = canvasBox(wide, { width: 672, height: 388 });
+  assert.ok(wideCss.width <= 673 && wideCss.height <= 389, "横屏画布溢出舞台");
+});

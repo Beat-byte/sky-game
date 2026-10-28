@@ -2,9 +2,9 @@
  * 本地成绩、偏好与局外存档的存储层（框架无关，可在 Node 里注入任意 storage 做单测）。
  *
  * 三个互不相干的键域：
- *   sky-games:game:<id>  = { v, best, plays, records[] }   单局成绩，三款街机游戏用
+ *   sky-games:game:<id>  = { v, best, plays, records[] }   单局成绩，五款游戏都用
  *   sky-games:global     = { v, prefs }                   全局偏好（静音等）
- *   sky-games:save:<id>  = { v, ...任意游戏自定义 }        跨局资产（仓库/货币/配装）
+ *   sky-games:save:<id>  = { v, ...任意游戏自定义 }        跨局资产（危险行动的仓库/货币/配装、小鸟的解锁与星数）
  *
  * 存档必须单独一个键域，不要往 game:<id> 里塞新字段：本文件对成绩文档有两处"自愈"
  * （版本不符当空档、records 非数组时只挑 best/plays 重建），未知字段会被静默丢掉；

@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { RouterLink } from "vue-router";
 import { Game, LINES_PER_LEVEL } from "./game.js";
 import { COLS, ROWS, applyField, canvasBox, computeLayout } from "./layout.js";
 import { PIECES, trimMatrix } from "./pieces.js";
@@ -335,6 +336,7 @@ onBeforeUnmount(() => {
         <button class="btn" @click="togglePause">暂停</button>
         <button class="btn" @click="restart">重开</button>
         <button class="btn" @click="toggleSound">{{ soundLabel }}</button>
+        <RouterLink class="btn exit" :to="{ name: 'home' }">退出</RouterLink>
       </div>
 
       <div class="pad">
@@ -529,6 +531,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+/* 出口只给手机端的全屏层用（页头的「← 游戏厅」会被盖住），桌面/平板照常收起 */
+.exit {
+  display: none;
+}
+
 .pad {
   /* PC 默认收起，触屏设备才显示；纯键盘玩家用快捷键即可 */
   display: none;
@@ -679,60 +686,7 @@ html[data-device="tablet"][data-orientation="portrait"] .guide {
   display: none;
 }
 
-/* 手机屏高优先给画布：战绩与长说明都不显示，只留统计、按钮与触屏板 */
-html[data-device="phone"] .playfield {
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-html[data-device="phone"] .pad {
-  display: grid;
-}
-
-html[data-device="phone"] .btn {
-  min-height: 48px;
-}
-
-html[data-device="phone"] .history,
-html[data-device="phone"] .guide {
-  display: none;
-}
-
-html[data-device="phone"][data-orientation="landscape"] .playfield {
-  grid-template-rows: minmax(0, 1fr) auto;
-}
-
-/* 手机横屏屏高很紧：统计与预览挤在同一行，触屏板排成一行 */
-html[data-device="phone"][data-orientation="landscape"] .stats {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-html[data-device="phone"][data-orientation="landscape"] .side {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-html[data-device="phone"][data-orientation="landscape"] .stats {
-  flex: 1 1 40%;
-}
-
-html[data-device="phone"][data-orientation="landscape"] .previews {
-  flex: 1 1 55%;
-}
-
-html[data-device="phone"][data-orientation="landscape"] .controls {
-  flex: 1;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-html[data-device="phone"][data-orientation="landscape"] .pad {
-  flex: 1 1 100%;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-html[data-device="phone"][data-orientation="landscape"] .btn {
-  min-height: 40px;
-}
+/* 手机端不在此处写规则：全屏层与压缩后的控制带由 src/styles/playfield.css 统一负责，
+   组件里再写一条 html[data-device="phone"] .X 会因为 scoped 属性把特异度顶到同一档，
+   后加载的异步 chunk 就会盖住公共层（上一版手机端画布被侧栏挤到只剩一条的病根）。 */
 </style>

@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { RouterLink } from "vue-router";
 import { Game } from "./game.js";
 import { LEVELS } from "./levels.js";
 import { applyField, canvasBox, computeLayout } from "./layout.js";
@@ -277,6 +278,7 @@ onBeforeUnmount(() => {
         <button class="btn" @click="togglePause">暂停</button>
         <button class="btn" @click="restart">重开</button>
         <button class="btn" @click="toggleSound">{{ soundLabel }}</button>
+        <RouterLink class="btn exit" :to="{ name: 'home' }">退出</RouterLink>
       </div>
 
       <p v-if="!storageOk" class="notice">本地存储写不进去（隐私模式或配额已满），本局成绩不会保存。</p>
@@ -424,6 +426,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+/* 出口只给手机端的全屏层用（页头的「← 游戏厅」会被盖住），桌面/平板照常收起 */
+.exit {
+  display: none;
+}
+
 .history {
   padding: 10px 12px;
   border: 1px solid var(--panel-edge);
@@ -559,43 +566,12 @@ html[data-device="tablet"][data-orientation="portrait"] .history {
   flex: 1;
 }
 
-/* 手机屏高优先给画布：战绩只在看板与首页卡片上看 */
-html[data-device="phone"] .history {
-  display: none;
-}
-
 /* 平板横屏侧栏只有 240px，按钮排两列才不会折行 */
 html[data-device="tablet"][data-orientation="landscape"] .controls {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* 手机：侧栏在下，按钮一行放满四个以省出画布高度，同时保证 48px 触控高度 */
-html[data-device="phone"] .playfield {
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-html[data-device="phone"] .btn {
-  min-height: 48px;
-}
-
-html[data-device="phone"][data-orientation="landscape"] .playfield {
-  grid-template-rows: minmax(0, 1fr) auto;
-}
-
-html[data-device="phone"][data-orientation="landscape"] .stats {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-html[data-device="phone"][data-orientation="landscape"] .controls {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-html[data-device="phone"][data-orientation="landscape"] .guide {
-  display: none;
-}
-
-html[data-device="phone"][data-orientation="portrait"] .legend {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
+/* 手机端不在此处写规则：全屏层与压缩后的控制带由 src/styles/playfield.css 统一负责，
+   组件里再写一条 html[data-device="phone"] .X 会因为 scoped 属性把特异度顶到同一档，
+   后加载的异步 chunk 就会盖住公共层（上一版手机端画布被侧栏挤小的病根）。 */
 </style>

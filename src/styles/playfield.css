@@ -1,0 +1,219 @@
+/**
+ * 手机端把「弹球 / 贪吃蛇 / 方块堆叠 / 愤怒的小鸟」四款钉成全屏形态（与「危险行动」的局内层同一套思路）。
+ *
+ * 为什么单独一层：改之前的手机竖屏（390×844）里，站点栏 + 游戏标题栏吃掉 137 px，
+ * `.side` 的统计面板（144）+ 方向盘（168）+ 按钮排（48）再吃掉 380，
+ * 留给画布的只有 303 px —— 贪吃蛇 13 列摊到 194 px，格子 14.9 px，蛇身跟背景一个粗细。
+ * 四款的结构本来一致（`.playfield > .stage + .side`），所以这份规则一次覆盖四款，
+ * 各视图的 scoped 样式只留桌面/平板档位。
+ *
+ * 三条纪律，改这里前先读：
+ * 1. **只改可见尺寸，不改玩法**。行列恒定（蛇 13×20 / 20×13，方块 10×20）由各自的 layout.js 保证，
+ *    弹球靠 speedScale 保持垂直穿越时间恒定，小鸟按 ppm 换算但视野恒 15 米、功率按屏幕行程归一。
+ *    这里绝不准按设备调速度、格子数或判定。
+ * 2. 选择器一律写成 `html[data-device="phone"] .playfield X`（特异度 3 类 + 1 元素），
+ *    压得过组件里 `.X[data-v-*]` 的单类声明，避免"组件异步 chunk 的 CSS 后加载把全局规则顶掉"。
+ * 3. `.side` 是控制带，必须留在流内、贴在画布下方（横屏时在右侧），
+ *    不许改回绝对浮层——按钮盖在战场上是上一版的病根。
+ */
+
+/* —— 竖屏：整屏给画布，控制带压在底部一条 —— */
+
+html[data-device="phone"] .playfield {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  /* 刘海与 home bar 不吃画面，也不让按钮被圆角裁掉 */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* 画布格子独占剩余高度；边框/内边距清掉，视图里 availableBox() 的 rect-2 才正好等于内容盒 */
+html[data-device="phone"] .playfield .stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg-soft);
+}
+
+html[data-device="phone"] .playfield .side {
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid var(--panel-edge);
+  background: #0e1522;
+}
+
+/* 统计从三列方块压成一条：整块 24 px，省下的全是画布高度。溢出走横向滚动，不藏信息 */
+html[data-device="phone"] .playfield .stats {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0 10px;
+  margin: 0;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--bg-soft);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+html[data-device="phone"] .playfield .stats::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-device="phone"] .playfield .stats dt {
+  margin-right: 2px;
+  font-size: 10px;
+}
+
+html[data-device="phone"] .playfield .stats dd {
+  margin: 0 6px 0 0;
+}
+
+/* 操作键一行放满（发射/暂停/重开/静音/退出），轨道按 64 px 自适应：
+   贪吃蛇 4 枚、弹球与方块 5 枚都排得下，触点 44 px 是手机下限 */
+html[data-device="phone"] .playfield .controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  gap: 6px;
+}
+
+html[data-device="phone"] .playfield .controls .btn {
+  min-height: 44px;
+  padding: 6px 4px;
+  font-size: 13px;
+}
+
+/* 贪吃蛇方向盘：十字三行，左右两格是占位 <span />，压成 0 宽才不浪费横向空间 */
+html[data-device="phone"] .playfield .dpad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+html[data-device="phone"] .playfield .dpad > span {
+  pointer-events: none;
+}
+
+/* 方块动作盘竖屏排一行六个：两行要多花 50 px，全是从棋盘身上扣的 */
+html[data-device="phone"] .playfield .pad {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+html[data-device="phone"] .playfield .dpad .btn,
+html[data-device="phone"] .playfield .pad .btn {
+  min-height: 44px;
+  padding: 6px 2px;
+  font-size: 13px;
+}
+
+/* 方块的下一块/暂存在手机竖屏是必须信息：场地变高后画布内侧面板（showPanels）会关掉 */
+html[data-device="phone"] .playfield .previews {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+html[data-device="phone"] .playfield .preview {
+  display: flex;
+  /* 标签与小图形并排：竖着排一枚 tetromino 要 60 px，横着只要 34 px */
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+
+html[data-device="phone"] .playfield .preview-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* 战绩与说明属于"想查才看"的内容，手机全屏里不占画布；桌面/平板仍照常显示 */
+/* 全屏层会盖住页头的「← 游戏厅」，出口必须留在控制带里；
+   组件默认写成 display:none，只有这里把它打开，桌面与平板继续用页头 */
+html[data-device="phone"] .playfield .exit {
+  display: block;
+}
+
+html[data-device="phone"] .playfield .history,
+html[data-device="phone"] .playfield .guide {
+  display: none;
+}
+
+html[data-device="phone"] .playfield .notice {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+/* 覆盖层卡片跟着屏宽收紧，主按钮保持 48 px 触点 */
+html[data-device="phone"] .playfield .overlay-card {
+  max-width: none;
+  width: min(100%, 380px);
+  padding: 14px 16px;
+}
+
+html[data-device="phone"] .playfield .overlay-card p {
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+/* —— 横屏：纵向只有 390 px，控制带整条挪到右侧，横向空间全给棋盘 —— */
+
+html[data-device="phone"][data-orientation="landscape"] .playfield {
+  flex-direction: row;
+  align-items: stretch;
+}
+
+html[data-device="phone"][data-orientation="landscape"] .playfield .side {
+  flex: 0 0 172px;
+  order: 2;
+  padding: 6px;
+  border-top: 0;
+  border-left: 1px solid var(--panel-edge);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+html[data-device="phone"][data-orientation="landscape"] .playfield .stats {
+  /* 172 px 宽的竖条里横排放不下，改成换行流：标签与数值成对往下排，可滚但一般用不上 */
+  flex-wrap: wrap;
+  gap: 0 8px;
+  font-size: 11px;
+  overflow: visible;
+}
+
+html[data-device="phone"][data-orientation="landscape"] .playfield .stats dd {
+  margin-right: 0;
+}
+
+html[data-device="phone"][data-orientation="landscape"] .playfield .controls {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* 带子只有 390 px 高：按键排三列（每列约 53 px，两字标签放得下），
+   两列时统计+预览+按钮+方向键要 457 px，最下面一排直接掉出屏幕 */
+html[data-device="phone"][data-orientation="landscape"] .playfield .pad {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* 两条预览并排挤不进 172 px，改成上下叠 */
+html[data-device="phone"][data-orientation="landscape"] .playfield .previews {
+  flex-direction: column;
+}

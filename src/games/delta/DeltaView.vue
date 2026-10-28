@@ -20,7 +20,7 @@ import {
   taskById,
   unequip,
 } from "./economy.js";
-import { applyField, canvasBox, computeLayout, fieldFor, metricsFor } from "./layout.js";
+import { applyField, canvasBox, computeLayout, resolveViewport } from "./layout.js";
 import { bindInput } from "./input.js";
 import { createAudio } from "./audio.js";
 import { draw, drawMinimapOverlay, setupCanvas } from "./renderer.js";
@@ -35,6 +35,7 @@ const GAME_ID = "delta";
 const MAP_LIST = MAPS.map((def) => compileMap(def));
 
 const stageEl = ref(null);
+const stackEl = ref(null);
 const canvasEl = ref(null);
 const glCanvasEl = ref(null);
 /** 视图模式：topdown 是原来的 2D 俯视，fps 走 three 的 WebGL；两者共用同一个引擎与同一条主循环 */
@@ -525,18 +526,23 @@ function syncLayout() {
   const canvas = canvasEl.value;
   if (!stage || !canvas) return;
   /**
+   * 盒子取 .stack 而不是 .stage：控制带进了流，画布真正能用的只有它上面那一格；
+   * 按整块 stage 算，横屏时会多出整整一条控制带的高度、把按钮盖在画面下面。
+   *
    * 藏身处/结算页里舞台是 display:none，getBoundingClientRect 恒为 0×0，
    * 直接喂给 canvasBox 会得到 2×1 的画布（进局后后台标签的 ResizeObserver 未必回调，就一直空白）。
-   * 退回外层容器，再退回视口，保证任何时候量到的都是能用的盒子。
+   * 所以逐级退回 .stage → 外层容器 → 视口，保证任何时候量到的都是能用的盒子。
    */
-  const raw = stage.getBoundingClientRect();
-  const host = stage.parentElement?.getBoundingClientRect() ?? { width: 0, height: 0 };
-  const pick = (own, other, fallback) => (own >= 40 ? own : other >= 40 ? other : fallback);
-  const box = {
-    width: pick(raw.width, host.width, window.innerWidth),
-    height: pick(raw.height, host.height, Math.round(window.innerHeight * 0.7)),
-  };
-  layout = computeLayout({ width: window.innerWidth, height: window.innerHeight }, box);
+  const usable = (box) => Boolean(box) && box.width >= 40 && box.height >= 40;
+  const candidates = [
+    stackEl.value?.getBoundingClientRect(),
+    stage.getBoundingClientRect(),
+    stage.parentElement?.getBoundingClientRect(),
+    { width: window.innerWidth, height: Math.round(window.innerHeight * 0.7) },
+  ];
+  const box = candidates.find(usable) ?? candidates[candidates.length - 1];
+  // 旋转事件抢跑时窗口值还是旧的，朝向以容器为准（见 layout.js 的 resolveViewport）
+  layout = computeLayout(resolveViewport({ width: window.innerWidth, height: window.innerHeight }, box), box);
   applyField(layout.field, layout.device, layout.orientation);
   const css = canvasBox(layout, box);
   canvas.style.width = `${css.width}px`;
@@ -573,6 +579,8 @@ onMounted(() => {
   syncLayout();
   observer = new ResizeObserver(syncLayout);
   observer.observe(stageEl.value);
+  // 画布盒子取自 .stack，所以它也必须被观察：控制带换行数（转屏/改档位）时只有它变
+  observer.observe(stackEl.value);
   window.addEventListener("orientationchange", syncLayout);
   input = bindInput({
     canvas: canvasEl.value,
@@ -661,6 +669,33 @@ onBeforeUnmount(() => {
 if (import.meta.env.DEV) {
   window.deltaLayout = () => layout;
   window.deltaRelayout = syncLayout;
+  /**
+   * 全屏布局的验收探针：整屏层/画布格子/控制带各自的盒子，外加每个按钮的命中测试。
+   * "看不见"和"点不动"是两件事——叠层吃掉点击在以前就真实发生过，所以这里一次都回读。
+   */
+  window.deltaBoxes = () => {
+    const rect = (el) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+    };
+    const raid = document.querySelector(".raid");
+    return {
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      device: document.documentElement.dataset.device,
+      orientation: document.documentElement.dataset.orientation,
+      raid: { ...rect(raid), position: raid ? getComputedStyle(raid).position : null },
+      stack: rect(stackEl.value),
+      pads: rect(document.querySelector(".pads")),
+      canvas: rect(canvasEl.value),
+      glCanvas: rect(glCanvasEl.value),
+      buttons: [...document.querySelectorAll(".pads .act")].map((b) => {
+        const r = b.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return { label: b.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height), hit: hit === b || b.contains(hit) };
+      }),
+    };
+  };
   /** 脚本里切视图与读视图状态：WebGL 起没起来、当前哪个视图，验证时都要能观测到 */
   window.deltaSetView = (mode) => setView(mode);
   window.deltaView = () => ({ mode: viewMode.value, gl: !!threeView, lookRadPerPx });
@@ -811,12 +846,13 @@ if (import.meta.env.DEV) {
         <span class="muted small">进度 {{ save.tasks.got }} / {{ save.tasks.need }} · 奖励 柯尔 {{ task?.reward.wallet ?? 0 }}、经验 {{ task?.reward.xp ?? 0 }}</span>
       </div>
 
-      <p v-if="message" class="msg">{{ message }}</p>
-      <p v-if="!readiness.ready" class="warn">出征还缺：{{ readiness.missing.join("、") }}</p>
-
-      <div class="cta">
-        <button class="primary" type="button" :disabled="!readiness.ready" @click="startRaid">进入 {{ currentMap.name }}</button>
-        <button class="ghost" type="button" @click="autoEquip">一键配装</button>
+      <div class="launch">
+        <p v-if="message" class="msg">{{ message }}</p>
+        <p v-if="!readiness.ready" class="warn">出征还缺：{{ readiness.missing.join("、") }}</p>
+        <div class="cta">
+          <button class="primary" type="button" :disabled="!readiness.ready" @click="startRaid">进入 {{ currentMap.name }}</button>
+          <button class="ghost" type="button" @click="autoEquip">一键配装</button>
+        </div>
       </div>
       <p class="muted small rules">
         拖动屏幕（或 <kbd>WASD</kbd>）移动 · 轻点画布（或 <kbd>F</kbd>）搜刮 · <kbd>空格</kbd> 开关自动开火 ·
@@ -827,7 +863,7 @@ if (import.meta.env.DEV) {
     </div>
 
     <div v-show="phase === 'playing' || phase === 'paused' || phase === 'result'" ref="stageEl" class="stage">
-      <div class="stack">
+      <div ref="stackEl" class="stack">
         <canvas ref="glCanvasEl" v-show="viewMode === 'fps'" class="board gl"></canvas>
         <canvas ref="canvasEl" class="board" :class="{ overlay: viewMode === 'fps' }"></canvas>
         <div v-if="viewMode === 'fps'" class="crosshair" aria-hidden="true"><i></i><b></b></div>
@@ -865,7 +901,14 @@ if (import.meta.env.DEV) {
         <div class="panel">
           <h2>已暂停</h2>
           <p class="muted">时限由引擎累加，暂停与切后台都不消耗。</p>
+          <p class="muted small">
+            {{ DEVICE_LABEL[device.device] }} · 视口恒 28×18 m · Lv.{{ save.level }} · 柯尔
+            {{ money(save.wallet) }}
+          </p>
           <button class="primary" type="button" @click="resume">继续</button>
+          <div class="row">
+            <button class="ghost" type="button" @click="toggleMute">{{ muted ? '已静音' : '静音' }}</button>
+          </div>
           <button class="ghost" type="button" @click="quitRaid">中途返回</button>
         </div>
       </div>
@@ -905,6 +948,37 @@ if (import.meta.env.DEV) {
   max-width: 1100px;
   margin: 0 auto;
   padding: 0 var(--gutter) calc(env(safe-area-inset-bottom) + 18px);
+  /* 藏身处的配装+黑市比一屏长：不给滚动条，手机上「进入」按钮直接被裁到屏幕外面 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/*
+ * 局内三态整块钉成全屏层。站点栏与游戏标题栏只是被盖在身后，画布因此才拿得到整屏高度：
+ * 竖屏 390 px 宽的手机上，画布从 154×240（每米 8.6 px，人形 6 px）变成 390×607（每米 21.7 px）。
+ * 父链上没有 transform/filter，fixed 的包含块就是视口；padding 走 safe-area，刘海与圆角不吃画面。
+ */
+.raid.phase-playing,
+.raid.phase-paused,
+.raid.phase-result {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  max-width: none;
+  gap: 0;
+  overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  background: var(--bg);
+}
+
+/* 设备标签与钱包条在局内只会白吃首屏高度，同样的数 HUD 上已经有了 */
+.phase-playing .bar,
+.phase-paused .bar,
+.phase-result .bar,
+.phase-playing .warn,
+.phase-paused .warn {
+  display: none;
 }
 
 .bar {
@@ -1102,9 +1176,31 @@ if (import.meta.env.DEV) {
   flex-wrap: wrap;
 }
 
+/*
+ * 藏身处（地图 + 配装 + 黑市 + 仓库 + 任务）在 390×844 竖屏上约 1224 px 高，一屏装不下，
+ * 出征按钮因此落在首屏之外。整块吸底常驻，缺装备的提示也一起挂在上面，
+ * 滑到 .rules 时自然归位。渐变底是为了压住从按钮缝里漏上来的滚动内容。
+ */
+.launch {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 0 4px;
+  background: linear-gradient(180deg, rgba(11, 18, 32, 0), var(--bg) 42%);
+}
+
 .cta .primary {
   min-height: 48px;
   padding: 10px 18px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .rules {
@@ -1123,22 +1219,26 @@ kbd {
 .stage {
   position: relative;
   width: 100%;
+  /* 画布高度全靠这里要：以前只有 min-height:240px，canvasBox 内接完就是 154×240 的一条 */
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 240px;
+  flex-direction: column;
   touch-action: none;
+  /* 控制带的高度：提示条要避开它，所以做成变量而不是到处写死 bottom */
+  --pads-h: 56px;
 }
 
 .board {
   display: block;
-  border-radius: 14px;
   background: #141b25;
 }
 
 /* 两张画布占同一个格子才能叠：GL 在下、2D 在上（小地图要看得见），准星再上一层 */
 .stack {
   position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   justify-items: center;
   align-items: center;
@@ -1222,13 +1322,20 @@ kbd {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  top: 42px;
+  /* 顶部留给 HUD 换行（手机上标签能到三四行），进度条改贴在控制带上方，拇指和视线都在那儿 */
+  top: auto;
+  bottom: calc(var(--pads-h) + 46px);
   padding: 4px 10px;
   border-radius: 10px;
   background: rgba(10, 15, 24, 0.72);
   font-size: 13px;
   pointer-events: none;
   z-index: 5;
+}
+
+.pulse {
+  bottom: calc(var(--pads-h) + 76px);
+  color: #4ac1ff;
 }
 
 .exfil {
@@ -1239,7 +1346,7 @@ kbd {
 .stage-msg {
   position: absolute;
   left: 50%;
-  bottom: 64px;
+  bottom: calc(var(--pads-h) + 10px);
   transform: translateX(-50%);
   max-width: 86%;
   padding: 6px 12px;
@@ -1250,26 +1357,28 @@ kbd {
   z-index: 6;
 }
 
-.pulse {
-  color: #4ac1ff;
-}
-
 .pads {
-  position: absolute;
-  inset: auto 6px 6px;
-  display: flex;
+  /* 从"绝对浮在画布上"改成画布下方的常驻控制带：8 个按钮压在 154 px 宽的画布上会竖到 4 行，
+     整个战场被自己的手指盖住——这是手机上没法玩的第二个原因。 */
+  flex: 0 0 auto;
+  height: var(--pads-h);
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 6px;
-  flex-wrap: wrap;
-  justify-content: center;
-  /* 必须压过两张画布：fps 下 2D 叠层是 z-index:2，命中测试按绘制顺序而非像素透明度，
-     按钮留在 auto 会被整块画布吃掉点击——切进第一人称后连切回来的按钮都点不动（实测）。 */
+  padding: 6px;
+  background: #0e1522;
+  /* 仍然要压过两张画布：fps 下 2D 叠层是 z-index:2，命中测试按绘制顺序而非像素透明度，
+     控件留在 auto 会被整块画布吃掉点击——切进第一人称后连切回来的按钮都点不动（实测）。 */
   z-index: 5;
 }
 
 .act {
-  min-height: 48px;
-  min-width: 56px;
-  font-size: 14px;
+  min-height: 44px;
+  padding: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .act.quit {
@@ -1283,7 +1392,6 @@ kbd {
   align-items: center;
   justify-content: center;
   background: rgba(8, 12, 20, 0.72);
-  border-radius: 14px;
   /* 暂停面板里的"继续/中途返回"也是按钮，同样要压过 fps 的叠层画布 */
   z-index: 6;
 }
@@ -1309,8 +1417,26 @@ kbd {
 }
 
 .result {
+  /* 全屏层里结算必须做成叠层：它是 .stage 的兄弟节点，留在流里会被 flex:1 的画布顶出屏幕 */
+  position: absolute;
+  inset: 0;
+  z-index: 8;
   display: flex;
-  justify-content: center;
+  /* 居中交给 .panel 的 margin:auto：一长串战利品时 align-items:center 会把标题顶到滚动区上沿之外，滚不回去 */
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(6, 10, 17, 0.74);
+}
+
+.result .panel {
+  margin: auto;
+}
+
+/* 战利品多到溢出时，「回藏身处」仍要一眼可见、一按就到 */
+.result .cta {
+  position: sticky;
+  bottom: 0;
 }
 
 .result ul {
@@ -1329,10 +1455,37 @@ kbd {
 }
 
 html[data-device="phone"] .top {
-  font-size: 13px;
+  font-size: 11px;
+  gap: 4px;
+  /* 右上角是小地图（minimapSize 72 逻辑 px，手机上≈65 CSS px）：标签铺满整宽会把它整个盖住 */
+  right: 84px;
 }
 
 html[data-device="phone"] .gear {
   grid-template-columns: 1fr;
+}
+
+/* 竖屏手机宽度只够 4 个按钮一行，控制带让出两行高度；画布仍按 18×28 m 内接，宽度铺满 */
+html[data-device="phone"] .stage {
+  --pads-h: 106px;
+}
+
+html[data-device="phone"] .pads {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* 横屏手机高度太矮（≈390 px），两行控制带会吃掉三分之一屏幕，改回一行 */
+html[data-device="phone"][data-orientation="landscape"] .stage {
+  --pads-h: 56px;
+}
+
+html[data-device="phone"][data-orientation="landscape"] .pads {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+/* 暂停/结算面板里的幽灵按钮：默认 32 px 高在手机上只有 33 px 实测触点，够不上拇指 */
+html[data-device="phone"] .ghost,
+html[data-device="phone"] .primary {
+  min-height: 44px;
 }
 </style>

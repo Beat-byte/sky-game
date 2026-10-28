@@ -43,7 +43,7 @@ test("方向判定覆盖手机与平板的旋转", () => {
   assert.equal(orientation(1180, 820), "landscape");
 });
 
-/** 手机竖屏（390×844，去掉导航后舞台约 390×600） */
+/** 手机竖屏的窄容器（390×844，舞台被压到 388×598 时的样子；全屏层的 753 高见下面那组用例） */
 const phone = computeLayout({ width: 390, height: 844 }, { width: 388, height: 598 });
 /** 手机横屏（844×390，舞台约 842×250） */
 const phoneWide = computeLayout({ width: 844, height: 390 }, { width: 842, height: 250 });
@@ -110,6 +110,32 @@ test("画布盒子等比铺满容器，旋转后不留大边", () => {
     const fill = Math.min(css.width / box.width, css.height / box.height);
     assert.ok(fill > 0.96, `${name} 只填充了 ${Math.round(fill * 100)}%`);
   }
+});
+
+/**
+ * 手机全屏层（src/styles/playfield.css）把控制带压到 89 px，舞台从旧的 598 长到 753，
+ * 容器长宽比 0.515 比当年的地板还窄：MAX_HEIGHT/长宽比地板必须跟着放开，
+ * 否则画布会被锁在 800×1200（比例 0.667），上下各白扔 86 px。
+ */
+const phoneFullBox = { width: 388, height: 753 };
+
+test("手机全屏竖屏：画布吃满舞台，且加高场地不改垂直穿越时间", () => {
+  const l = computeLayout({ width: 390, height: 844 }, phoneFullBox);
+  assert.equal(l.device, "phone");
+  assert.ok(l.field.height <= MAX_HEIGHT, "场地高度不许越过预算上限");
+
+  const css = canvasBox(l, phoneFullBox);
+  assert.ok(css.width <= phoneFullBox.width + 1 && css.height <= phoneFullBox.height + 1, "画布溢出舞台");
+  assert.ok(css.height >= phoneFullBox.height - 2, `画布只占了 ${css.height} px 高，舞台被浪费`);
+
+  const m = metricsFor(l.field, "phone");
+  const timePhone = l.field.height / (380 * m.speedScale);
+  const timeDesktop = desktop.field.height / (380 * metricsFor(desktop.field, "desktop").speedScale);
+  assert.ok(Math.abs(timePhone - timeDesktop) < 0.01, "全屏加高场地不能改变垂直穿越时间");
+  assert.ok(m.brickTop + 8 * (m.brickHeight + m.brickGap) < l.field.height * 0.62, "砖块区不能占满新场地");
+  // 手机挡板的 CSS 宽度：0.19 的逻辑宽 × 每 CSS 像素对应的逻辑宽
+  const paddleCss = m.paddleW * (css.width / l.field.width);
+  assert.ok(paddleCss >= 60, `挡板只有 ${paddleCss.toFixed(0)} CSS px，手指盖不住`);
 });
 
 test("极端长宽比被夹在安全区间，不产生 NaN 或无穷", () => {
@@ -229,6 +255,54 @@ test("delta 画布在三端等比内接，且看到的米数完全一致", () =>
       `${item.viewport.width}×${item.viewport.height} 看到的战场变了`
     );
   }
+});
+
+test("delta 手机全屏：画布每米像素地板，别让战场缩成看不清的一条", () => {
+  // 反面案例（改之前的真实盒子）：.stage 只有 min-height:240px，竖屏 390 宽的手机上
+  // 容器 358×240 → 画布 154×240 → 每米 8.6 px、人形 6 px，八个按钮整个盖在战场上，根本没法玩。
+  // 现在局内是全屏层：画布格子 = 整屏 - 安全区 - 控制带，控制带高度按档位定死。
+  const PAD_BAND = { portrait: 106, landscape: 56 };
+  const cases = [
+    { name: "iPhone 14 竖屏", viewport: { width: 390, height: 844 }, safe: { top: 47, bottom: 34, sides: 0 }, band: PAD_BAND.portrait },
+    { name: "iPhone SE 竖屏", viewport: { width: 375, height: 667 }, safe: { top: 0, bottom: 0, sides: 0 }, band: PAD_BAND.portrait },
+    { name: "iPhone 14 横屏", viewport: { width: 844, height: 390 }, safe: { top: 0, bottom: 0, sides: 47 }, band: PAD_BAND.landscape },
+    { name: "iPad 竖屏", viewport: { width: 820, height: 1180 }, safe: { top: 24, bottom: 24, sides: 0 }, band: PAD_BAND.portrait },
+  ];
+  for (const item of cases) {
+    const box = {
+      width: item.viewport.width - item.safe.sides * 2,
+      height: item.viewport.height - item.safe.top - item.safe.bottom - item.band,
+    };
+    const layout = DL.computeLayout(item.viewport, box);
+    const canvas = DL.canvasBox(layout, box);
+    const meters = DL.viewMeters(layout.field);
+    const pxPerM = Math.min(canvas.width / meters.width, canvas.height / meters.height);
+    assert.ok(pxPerM >= 18, `${item.name} 每米只有 ${pxPerM.toFixed(1)} px，人形只有 ${(2 * 0.36 * pxPerM).toFixed(1)} px`);
+    // 人形直径 = radius 0.36 m × 2，13 px 是能看清朝向的下限（描边 2.4 px 之外还得留出躯干）
+    assert.ok(2 * 0.36 * pxPerM >= 13, `${item.name} 玩家太小，读不出朝向`);
+    // 控制带只准吃掉屏幕的一小条，否则"全屏"是假的
+    assert.ok(item.band / item.viewport.height <= 0.28, `${item.name} 控制带吃掉 ${((item.band / item.viewport.height) * 100).toFixed(0)}% 屏幕`);
+    assert.ok(canvas.width <= box.width + 1 && canvas.height <= box.height + 1, `${item.name} 画布溢出了格子`);
+  }
+});
+
+test("delta 旋转抢跑：窗口朝向与容器打架时以容器为准，且视野面积仍是 504 m²", () => {
+  // 反面案例（真机实测）：横屏容器 840×280，ResizeObserver 抢在 innerWidth 更新前回调，
+  // 拿到旧窗口 390×844 → 场地排成竖屏 18×28 m → 画布 386×600，比容器高出 320 px，画面被裁、按钮压在画布上。
+  const staleWindow = { width: 390, height: 844 };
+  const landscapeBox = { width: 840, height: 280 };
+  const vp = DL.resolveViewport(staleWindow, landscapeBox);
+  assert.equal(DL.orientation(vp.width, vp.height), "landscape");
+  const layout = DL.computeLayout(vp, landscapeBox);
+  const canvas = DL.canvasBox(layout, landscapeBox);
+  assert.ok(canvas.width <= landscapeBox.width + 1 && canvas.height <= landscapeBox.height + 1, "画布仍然溢出容器");
+  assert.equal(DL.viewMeters(layout.field).width * DL.viewMeters(layout.field).height, 504);
+  // 两者一致时不许改判：桌面竖窗不能被容器盒子带跑
+  const agree = { width: 820, height: 1180 };
+  assert.deepEqual(DL.resolveViewport(agree, { width: 816, height: 900 }), agree);
+  // 藏身处里舞台 display:none，盒子恒 0×0：必须退回窗口判定，不许产出 NaN 场地
+  assert.deepEqual(DL.resolveViewport(agree, { width: 0, height: 0 }), agree);
+  assert.deepEqual(DL.resolveViewport(agree, null), agree);
 });
 
 test("delta 的 metricsFor 只给装饰量，玩法量一律不随设备变", () => {

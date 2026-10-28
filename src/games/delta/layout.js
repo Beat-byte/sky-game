@@ -6,12 +6,14 @@
  * **逻辑视口恒定 28×18 米（面积恒 504 m²）**，横竖屏只互换长边——手机能看到的战场和 PC 一样大，
  * 差别只是每一米摊到多少 CSS 像素。
  *
- * 由此产生两条纪律，改这个文件前先读：
+ * 由此产生三条纪律，改这个文件前先读：
  * 1. 一切玩法量（移速、弹速、感知半径、射速、撤离圈）都以**米/米每二次方秒**定义，住在 map.js 的 WORLD 里。
  *    本文件的 metricsFor **只准返回装饰量**（线宽、字号、描边、摇杆半径、小地图边长）。
  *    一旦有人把"每米像素数"或"伤害"塞进 metricsFor，手机和 PC 的难度就分叉了，而且单测抓不住。
  * 2. fieldFor/fieldSize **只读朝向，不读容器尺寸**。这与弹球、方块的 fieldSize(box) 同名反义
  *    （那两个是按容器反推场地），所以这里保留薄封装但把语义写死在注释里。
+ * 3. resolveViewport 可以读容器，但只准用来在窗口值陈旧时翻朝向这一票，
+ *    场地仍然只能是 fieldFor(朝向) 的那两块，不许按容器反推尺寸。
  *
  * 坐标系：世界用米；画布用"逻辑像素"= 米 × PX_PER_M。CSS 尺寸与 devicePixelRatio 的换算
  * 沿用三款的 canvasBox + setTransform(scale) 方案，本文件不碰 DOM。
@@ -98,6 +100,21 @@ export function metricsFor(field = FIELD, device = FIELD.device) {
     /** 撤离圈/视野扇形的线宽补偿 */
     glowWidth: phone ? 3 : 2.4,
   };
+}
+
+/**
+ * 窗口值与容器盒子的朝向打架时，以容器为准。
+ *
+ * 为什么会打架：真机旋转时 orientationchange / ResizeObserver 常常抢在 window.innerWidth 更新之前回调，
+ * 这时按旧窗口排出来的画布会比容器高出一整条（840×280 的横屏容器里塞进 386×600），画面被裁、控制带压不住。
+ * 翻这一票不改难度：两档视野面积恒 504 m²，只是长短边互换，改的是画面能不能装进容器。
+ * 盒子不可用（0×0、缺失）时保持窗口判定，不引入新的除零路径。
+ */
+export function resolveViewport(windowSize, box) {
+  const win = { width: windowSize?.width ?? 0, height: windowSize?.height ?? 0 };
+  const usable = box && box.width >= 40 && box.height >= 40 ? box : null;
+  if (!usable || orientation(win.width, win.height) === orientation(usable.width, usable.height)) return win;
+  return { width: usable.width, height: usable.height };
 }
 
 /**
