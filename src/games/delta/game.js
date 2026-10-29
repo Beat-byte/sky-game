@@ -234,6 +234,7 @@ export class Delta {
     this.settlement = null;
 
     this.fireEnabled = true;
+    this.triggerHeld = false;
     this.reloading = 0;
     this.fireCooldown = 0;
     this.medCooldown = 0;
@@ -257,6 +258,8 @@ export class Delta {
     /** 视图模式与待消化转向：只改"摇杆向量怎么解释"，不改任何玩法量（见 setViewMode） */
     this.viewMode = "topdown";
     this.lookPending = 0;
+    /** 本步是否真的消化过转向：俯视下用来让"走路自动回头"给手动转身让路（见 turnPlayer） */
+    this.turnedThisStep = false;
     this.queue = [];
     this.acc = 0;
     this.sightFactor = this.map.sightFactor ?? 1;
@@ -295,18 +298,33 @@ export class Delta {
     this.lookPending = clamp(this.lookPending + value, -MAX_LOOK_PER_STEP, MAX_LOOK_PER_STEP);
   }
 
-  /** 每步先消化转向，再移动：这样"边转身边走"在一帧里顺序稳定、可复现 */
+  /**
+   * 按住式扳机（吃鸡手游那套）：按住就沿当前枪口方向出枪，不需要视野里有敌人，
+   * 松手立刻停 —— 事件回调只做这一件事，真正的开火节奏仍然发生在 autoFire 里。
+   * 它与"自动开火"（fireEnabled，空格切换）是两条独立通道：扳机不改动 fireEnabled，
+   * 所以玩家按住扳机不会把自动开火的状态搞乱。
+   */
+  setTrigger(pressed) {
+    this.triggerHeld = Boolean(pressed);
+    return this.triggerHeld;
+  }
+
+  /**
+   * 每步先消化转向，再移动：这样"边转身边走"在一帧里顺序稳定、可复现。
+   * 俯视也吃这一路 —— 底部双摇杆要"站着不动只转身"（推右摇杆、左摇杆归零），
+   * 旧版把俯视的转向直接丢掉，等于右摇杆在默认视图里是摆设。
+   * turnedThisStep 只在这一步真消化了非零转向时为真，movePlayer 据此决定要不要恢复"推哪走哪"。
+   */
   turnPlayer() {
-    if (this.viewMode !== "fps") {
-      this.lookPending = 0;
-      return;
-    }
     if (this.lookPending === 0 || !this.player.alive) {
       this.lookPending = 0;
+      this.turnedThisStep = false;
       return;
     }
-    this.player.angle = wrapAngle(this.player.angle + this.lookPending);
+    const turn = this.lookPending;
     this.lookPending = 0;
+    this.player.angle = wrapAngle(this.player.angle + turn);
+    this.turnedThisStep = this.viewMode !== "fps";
   }
 
   /** 动作排队（上限 4），全部在 flushInput 阶段消费，绝不在事件回调里直接改状态 */
@@ -449,8 +467,9 @@ export class Delta {
     moveWithCollision(this.map, this.player, dirX * move, dirY * move, this.player.radius, moveScratch);
     this.player.x = moveScratch.x;
     this.player.y = moveScratch.y;
-    // 俯视沿用"推哪走哪"；第一人称的朝向归 setLook 管，走路不得偷偷回头
-    if (this.viewMode !== "fps") this.player.angle = Math.atan2(dirY, dirX);
+    // 俯视沿用"推哪走哪"；第一人称的朝向归 setLook 管，走路不得偷偷回头。
+    // 例外：这一步玩家正用右摇杆手动转身，走路不能再把身体拧回移动方向。
+    if (this.viewMode !== "fps" && !this.turnedThisStep) this.player.angle = Math.atan2(dirY, dirX);
     // 一动就打断搜刮：否则可以"边走边翻箱子"绕过站桩风险
     if (this.searchTarget) {
       this.searchTarget = null;
@@ -473,7 +492,8 @@ export class Delta {
   }
 
   autoFire(dt) {
-    if (!this.player.alive || !this.fireEnabled || this.reloading > 0) return;
+    if (!this.player.alive || this.reloading > 0) return;
+    if (!this.fireEnabled && !this.triggerHeld) return;
     if (this.mag <= 0) {
       this.startReload();
       return;
@@ -483,9 +503,11 @@ export class Delta {
       coneRad: WORLD.fireConeRad,
       visible: (a, b) => this.visible(a, b),
     });
-    if (!target) return;
-    const aim = Math.atan2(target.y - this.player.y, target.x - this.player.x);
-    if (this.viewMode !== "fps") {
+    // 扳机是"我就是要朝这个方向打"，视野里没人也得响；自动开火仍然只挑得到的人
+    if (!target && !this.triggerHeld) return;
+    const aim = target ? Math.atan2(target.y - this.player.y, target.x - this.player.x) : this.player.angle;
+    // 追瞄只在玩家这一步没自己转身时归正枪口：右摇杆是"我要朝这儿打"，不能被归正拽回去
+    if (target && this.viewMode !== "fps" && !this.turnedThisStep) {
       let diff = aim - this.player.angle;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
@@ -813,6 +835,7 @@ export class Delta {
       ammoMatched: this.ammoMatched,
       reloading: this.reloading > 0,
       fireEnabled: this.fireEnabled,
+      triggerHeld: this.triggerHeld,
       meds: this.meds,
       bagUsed: this.bag.length,
       bagSlots: this.bagSpec.slots,

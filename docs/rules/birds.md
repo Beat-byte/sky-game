@@ -179,4 +179,4 @@ TNT 引爆半径 4、冲量 30、距离衰减线性，**8.8 米外的石头不�
 
 - 主循环三驱动源与模块分工细则：[game-module.md](game-module.md)
 - hidden 页面泵帧与画布取样：[browser-verify.md](browser-verify.md)
-- 回归基线：`test/birds.test.js` 22 例（全套 167 例）
+- 回归基线：`test/birds.test.js` 22 例（全套 177 例）

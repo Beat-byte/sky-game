@@ -48,7 +48,9 @@
 - 方块堆叠 `window.tetris` / `window.tetrisLayout` / `window.tetrisRelayout`
 - 危险行动 `window.delta` / `window.deltaLayout` / `window.deltaRelayout` / `window.deltaFrames` /
   `window.deltaSetView` / `window.deltaView` / `window.deltaThree` / `window.deltaGlSample` /
-  `window.deltaBoxes`（全屏层、画布格子、控制带与逐按钮的 `elementFromPoint` 命中）
+  `window.deltaBoxes`（全屏层、画布格子、控制带、可见摇杆与逐按钮的 `elementFromPoint` 命中，
+  外加 `bareCanvasHit` —— 浮层容器有没有吃掉画布触控）/
+  `window.deltaStick()`（摇杆 DOM 圈态 + 引擎向量）/ `window.deltaTrigger(bool)`（扳机两态）
 - 愤怒的小鸟 `window.birds` / `window.birdsLayout` / `window.birdsCamera` / `window.birdsRelayout` /
   `window.birdsLevel(i)` / `window.birdsShoot(power, angle)` / `window.birdsBoxes`（同一套逐按钮命中，
   细节见 [birds.md](birds.md)）

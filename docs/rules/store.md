@@ -7,13 +7,16 @@
 | 键 | 结构 | 用途 |
 | --- | --- | --- |
 | `sky-games:game:<id>` | `{v, best, plays, records[]}` | 单局成绩（五款游戏都用） |
-| `sky-games:global` | `{v, prefs}` | 全局偏好（静音、视图偏好等） |
+| `sky-games:global` | `{v, prefs}` | 全局偏好：`muted`、`deltaView`（危险行动视图）、`deltaLandscapeHintOff`（竖屏"请横屏"引导不再提示） |
 | `sky-games:save:<id>` | `{v, ...游戏自定义}` | 跨局资产（危险行动：仓库/货币/配装；愤怒的小鸟：`unlocked`/`stars`/`best`） |
 
 **当前两个版本号都是 `1`**（`SCHEMA_VERSION` 管成绩与全局偏好，`SAVE_SCHEMA_VERSION` 管跨局存档）。
 **存档必须单独一个键域，不要往 `game:<id>` 里塞新字段**：`store.js` 对成绩文档有两处"自愈"
 （版本不符当空档、`records` 非数组时只挑 `best`/`plays` 重建），未知字段会被静默丢掉；
 而且存档的 `SAVE_SCHEMA_VERSION` 与成绩的 `SCHEMA_VERSION` 各有各的递增节奏，混用会互相清零。
+
+**往 `prefs` 里加一个新键不算"改结构"，不需要升 `SCHEMA_VERSION`**：`prefs` 是开放字典，老档读出来只是少一个键，
+`readPrefs()` 返回 `{...prefs}` 后按 `!== true` 判断即可；改的是既有字段的形状或语义才要升版本。
 
 ## 铁律
 

@@ -39,7 +39,7 @@
 - `src/games/delta/scene3d.js` / `three-view.js` —— 3D 数学与色板的真实来源 / 只做 three 绑定
 - `src/games/birds/physics.js` / `levels.js` —— 求解器与材质表、六关手写数据的真实来源（`renderer.js` 从这两处取数值）
 - `scripts/dev.mjs`、`scripts/gen-icons.mjs` —— 本地服务托管、站点图标生成器
-- `test/*.test.js` —— 回归基线 167 例
+- `test/*.test.js` —— 回归基线 178 例
 
 ## 维护说明
 

@@ -1,8 +1,8 @@
 # 测试：分布与"改 X 要同步 Y"
 
-跑法：`npm test`（等价 `node --test`，无需构建、无需浏览器）。基线 **167 例全绿**。
+跑法：`npm test`（等价 `node --test`，无需构建、无需浏览器）。基线 **178 例全绿**。
 
-## 分布（167 例）
+## 分布（178 例）
 
 | 文件 | 例数 | 覆盖 |
 | --- | --- | --- |
@@ -11,7 +11,8 @@
 | `test/layout.test.js` | 16 | 三端几何档位，含 delta 视野/画布盒子交叉校验、手机全屏每米像素地板与旋转抢跑时容器接管、弹球手机全屏舞台画布与穿越时间恒定 |
 | `test/snake.test.js` | 19 | 贪吃蛇引擎（含旋转双射）、手机全屏舞台的格子边长地板 |
 | `test/tetris.test.js` | 22 | 方块堆叠（含 7 袋随机、锁定、消行）、手机全屏舞台的行列恒定与画布铺满 |
-| `test/delta.test.js` | 42 | 危险行动：引擎、双视图、色板与抗晕参数 |
+| `test/delta.test.js` | 45 | 危险行动：引擎、双视图、色板与抗晕参数（含按住扳机与自动开火两条通道互不污染、俯视也消化 `setLook`、右摇杆转向时"推哪走哪"与追瞄让路） |
+| `test/delta-input.test.js` | 8 | 危险行动输入层：假 DOM 桩上的摇杆向量归零、可见摇杆坐标与半径夹取、多指接力、第一人称转向分区、固定双座的座心原点与按下即形变、转身座连续量与座外像素增量共存、**座内短按不算"轻点＝搜刮"而座外与浮动档位仍算** |
 | `test/birds.test.js` | 22 | 愤怒的小鸟：求解器下限（材质门槛、TNT 连锁范围）、六关自检与预沉降自稳、物理确定性、屏幕功率归一与三端视野地板、状态机（一发入魂/哑弹判负/暂停冻结）、渲染逐笔一致、引擎源码扫描 |
 | `test/store.test.js` | 18 | 持久化层（注入 fake storage） |
 | `test/icons.test.js` | 6 | 像素矩阵与已提交产物对拍 |
@@ -30,6 +31,9 @@
   （`test/birds.test.js` 的桩只认字符串键，Symbol 键一律 `undefined`；参数里的对象统一记成 `<obj>`，
   否则 `String(proxy)` 会抛 "Cannot convert object to primitive value"）。
 - 存储层与图标生成器都靠"注入依赖"（`storage` / 文件读写）而不是 mock 全局，新增模块沿用这个写法。
+- `delta/input.js` 是唯一读浏览器事件的一层，`test/delta-input.test.js` 用**假 emitter 桩 + 临时挂到
+  `globalThis` 的 `window`/`document`**（`bindInput` 会往这两个上挂监听，Node 里默认不存在）测它。
+  新增事件通道请照这一例补，别把归零逻辑只交给真机手感 —— "手指离开还在往前跑"就是这么漏掉的。
 
 ## 改 X 必须同步 Y（漏一项就有线上代价）
 
@@ -42,6 +46,10 @@
   见 [ghpages.md](ghpages.md)。
 - 改**危险行动人形/配色/相机参数** → 一起看 `delta` 里对应的下限断言，
   阈值与理由记在 [delta.md](delta.md)。
+- 改**手机浮层摇杆（`.pads`/`.cluster`/`.padlayer`/`.stick.seat`）或 `input.js` 的通道** →
+  `test/delta-input.test.js` 的归零、夹取与"座内短按不搜刮"八例一起动，页面里必须重新读
+  `deltaBoxes()`：`bareCanvasHit`、逐按钮命中、`seatMove/seatLook` 与 `rigs` 的**零像素偏差**
+  （浮层容器一旦吃掉触控，摇杆和转身当场全废；判定圆与画出来的圆分家就是"看得见摸不着"），见 [delta.md](delta.md)。
 - 改**小鸟材质/发射速度/关卡几何** → `birds` 里的门槛断言（2/6/25、3/20）、六关 `validateLevel`
   空数组、barn-1 一发入魂与 fort-1 哑弹判负的期望分数一起动，数值与理由记在 [birds.md](birds.md)。
 - 改**小鸟视野地板（`VIEW_WIDTH`/`MIN_VIEW_HEIGHT`/`PULL_REF_RATIO`）** →

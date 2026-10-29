@@ -223,6 +223,33 @@ test("fire-toggle 关掉后不再消耗弹药", () => {
   assert.equal(g.mag, WEAPONS.wp_pistol.mag);
 });
 
+test("按住扳机：空场（视野里没人）也出枪，松手立刻停", () => {
+  const g = noThreats(newRaid());
+  const spot = openSpotWithSight(g);
+  g.placePlayer(spot.x, spot.y);
+  // 自动开火关到最严：这一匣只能是被扳机打出去的
+  assert.equal(g.fireEnabled, false);
+  g.setTrigger(true);
+  run(g, 1.2);
+  const fired = g.stats.shots;
+  assert.ok(fired > 0, "按住扳机一枪没开 —— 吃鸡式开火没接进 autoFire");
+  assert.ok(fired <= WEAPONS.wp_pistol.mag, `1.2 秒打了 ${fired} 枪，扳机绕过了射速上限`);
+  g.setTrigger(false);
+  run(g, 1.5);
+  assert.equal(g.stats.shots, fired, "松手之后还在开火");
+});
+
+test("扳机不污染自动开火：按下/松开都不动 fireEnabled", () => {
+  const g = newRaid();
+  assert.equal(g.fireEnabled, true, "开局的自动开火应当是开着的");
+  g.setTrigger(true);
+  g.step(FIXED_STEP);
+  assert.equal(g.fireEnabled, true, "按住扳机把自动开火的开关改了");
+  g.setTrigger(false);
+  g.step(FIXED_STEP);
+  assert.equal(g.fireEnabled, true, "松开扳机把自动开火关掉了");
+});
+
 test("打药：按 heal 回复、扣一件、1 秒冷却内不许连打、满血不打", () => {
   const g = noThreats(newRaid());
   g.player.hp = 40;
@@ -673,14 +700,30 @@ test("俯视推哪走哪，第一人称摇杆变相对朝向：走路不许偷�
   assert.ok(g.player.x < sideOrigin.x && Math.abs(g.player.y - sideOrigin.y) < 0.05, "面向正南时右平移应当朝西");
 });
 
-test("第一人称转向：只由 setLook 累加，单步夹取、切视图清空、俯视直接丢弃", () => {
+/** 角差取最短弧：断言不能被 wrapAngle 的 ±π 边界绊倒 */
+const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+
+/**
+ * 转向通道过去只在第一人称生效（俯视直接丢掉待消化转向），
+ * 手机横屏铺了右下那枚转身摇杆之后，"站着不动只转身"在俯视也必须成立——
+ * 否则默认视图里右摇杆是个摆设。夹取、切视图清空、死了不转身这三条保持原样。
+ */
+test("转向通道：俯视也消化 setLook，单步夹取、切视图清空、死了不转身", () => {
   const g = newRaid();
   noThreats(g);
   g.setLook(Number.NaN);
   g.setLook("0.5");
   g.setLook(-2);
+  const topAngle = g.player.angle;
+  assert.equal(g.lookPending, -1, "非有限值没被忽略，或累加没有夹到 ±1");
   g.step(FIXED_STEP);
-  assert.equal(g.lookPending, 0, "非 fps 的转向应当被丢掉");
+  assert.equal(g.lookPending, 0);
+  assert.ok(Math.abs(angleDiff(g.player.angle, topAngle - 1)) < 1e-9, "俯视把待消化转向丢掉了，右摇杆在默认视图里就是摆设");
+
+  g.setLook(999);
+  assert.ok(Math.abs(g.lookPending) <= 1, "单步转向没有上限，一拖就能转半圈");
+  g.setLook(-999);
+  assert.ok(g.lookPending >= -1);
 
   g.setViewMode("fps");
   const angle = g.player.angle;
@@ -691,11 +734,6 @@ test("第一人称转向：只由 setLook 累加，单步夹取、切视图清�
   assert.ok(Math.abs(g.player.angle - (angle + 0.5)) < 1e-9, "待消化转向没有在一整步里被消费");
   assert.equal(g.lookPending, 0);
 
-  g.setLook(999);
-  assert.ok(Math.abs(g.lookPending) <= 1, "单步转向没有上限，一拖就能转半圈");
-  g.setLook(-999);
-  assert.ok(g.lookPending >= -1);
-
   g.setLook(0.4);
   g.setViewMode("topdown");
   assert.equal(g.lookPending, 0, "切回俯视留下了待消化转向");
@@ -705,6 +743,24 @@ test("第一人称转向：只由 setLook 累加，单步夹取、切视图清�
   g.setLook(0.6);
   g.step(FIXED_STEP);
   assert.equal(g.player.angle, deadAngle, "死了还能转身");
+});
+
+/** 双摇杆的分工：右摇杆在推的这一步，走路不许把身体拧回移动方向；松手后马上恢复"推哪走哪" */
+test("双摇杆：右摇杆在推时转向优先，松手恢复推哪走哪", () => {
+  const g = newRaid();
+  noThreats(g);
+  g.setStick(0, -1);
+  g.step(FIXED_STEP);
+  const north = g.player.angle;
+  assert.ok(Math.abs(north + Math.PI / 2) < 1e-9, `俯视默认应当推哪走哪，实得 ${north}`);
+
+  g.setLook(0.2);
+  g.step(FIXED_STEP);
+  assert.ok(Math.abs(g.player.angle - (north + 0.2)) < 1e-6, "走路把右摇杆的转向覆盖了，边退边打做不到");
+
+  g.setLook(0);
+  g.step(FIXED_STEP);
+  assert.ok(Math.abs(g.player.angle + Math.PI / 2) < 1e-6, "松开右摇杆后没有恢复朝向移动方向");
 });
 
 /**

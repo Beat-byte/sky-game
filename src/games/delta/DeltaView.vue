@@ -38,10 +38,32 @@ const stageEl = ref(null);
 const stackEl = ref(null);
 const canvasEl = ref(null);
 const glCanvasEl = ref(null);
+const moveSeatEl = ref(null);
+const lookSeatEl = ref(null);
+/**
+ * 可见摇杆：输入层把当前那根手指所在摇杆的画布内坐标报上来，这里只负责画圈。
+ * 它 pointer-events:none，手指照样落在画布上 —— 可视化不能把触控吃掉。
+ * move 是左下"前进后退"，look 是右下"转身"；没有固定座的档位只用 move（浮动那枚）。
+ */
+const stickPad = reactive({ active: false, originX: 0, originY: 0, knobX: 0, knobY: 0, radius: 58 });
+const lookPad = reactive({ active: false, originX: 0, originY: 0, knobX: 0, knobY: 0, radius: 58 });
+/** 两枚固定座在画布内的几何（画布 CSS 像素）；null 表示当前档位不铺固定摇杆，退回浮动 */
+const padRigs = ref(null);
+/** 画布在 .stack 里的实际盒（横屏 full-bleed 后仍有左右留白，摇杆坐标要按画布原点算） */
+const boardBox = ref({ width: 0, height: 0 });
+/** 扳机按下的视觉态：引擎那份 triggerHeld 是游戏状态，这里的是"手指还压着没有" */
+const triggerHeld = ref(false);
 /** 视图模式：topdown 是原来的 2D 俯视，fps 走 three 的 WebGL；两者共用同一个引擎与同一条主循环 */
 const viewMode = ref("topdown");
 const hud = reactive({});
 const phase = ref("lobby");
+/**
+ * 竖屏「请横屏」引导：横屏才有铺满整屏的画布与右侧那枚按住开火的圆钮，竖屏只能带着控制带玩。
+ * 网页不能替玩家锁定方向（`screen.orientation.lock` 只在 Android 全屏里有效，iOS 直接抛错），
+ * 所以这里做的是"出征前拦一道、讲清楚、让玩家自己转"：转成横屏当场放行，坚持竖屏也行，
+ * "不再提示"走 store.setPref（持久化只有这一条路，组件不许碰 localStorage）。
+ */
+const landscapeHint = ref(false);
 const muted = ref(false);
 const message = ref("");
 const ledger = ref(null);
@@ -68,8 +90,9 @@ let layout = null;
 let threeView = null;
 /** 局内提示条的自动消失计时器（提示压在画布上，不留着挡视线） */
 let msgTimer = 0;
-/** 键盘转向档位（-1/0/1），由输入层回调写、pump 里按 dt 积分 */
-let lookRate = 0;
+/** 转向速率（-1..1），分两个来源：键盘（±1）与横屏右摇杆（连续量），各自按各自的角速度积分 */
+let lookKeyRate = 0;
+let lookStickRate = 0;
 /** 像素→弧度的换算系数，syncLayout 按当前画布宽度刷新（整屏拖动 ≈ 300°） */
 let lookRadPerPx = 1 / 900;
 let runId = 0;
@@ -193,9 +216,14 @@ function stashInSlot(slot) {
   });
 }
 
-function startRaid() {
+function startRaid(skipHint = false) {
   if (!readiness.value.ready) {
     message.value = `出征还缺：${readiness.value.missing.join("、")}`;
+    return;
+  }
+  // 模板里是 @click="startRaid"，会把 PointerEvent 当第一个参数递进来，所以只认字面量 true
+  if (skipHint !== true && wantsLandscapeHint()) {
+    landscapeHint.value = true;
     return;
   }
   runId = Date.now();
@@ -209,12 +237,49 @@ function startRaid() {
     debug: import.meta.env.DEV,
   });
   if (import.meta.env.DEV) window.delta = game;
+  // 新局是全新的引擎实例，扳机与摇杆的视觉态必须跟着清零
+  triggerHeld.value = false;
+  stickPad.active = false;
+  lookPad.active = false;
+  lookKeyRate = 0;
+  lookStickRate = 0;
   audio?.unlock();
   syncHud(true);
   phase.value = "playing";
   message.value = "";
   void rebindView();
 }
+
+/** 只有手机竖屏、且没点过"不再提示"才拦：平板/桌面本来就没有横屏一说，不许弹 */
+function wantsLandscapeHint() {
+  return device.device === "phone" && device.orientation === "portrait" && prefs.value.deltaLandscapeHintOff !== true;
+}
+
+function startInPortrait() {
+  landscapeHint.value = false;
+  startRaid(true);
+}
+
+function neverAskLandscapeHint() {
+  store.setPref("deltaLandscapeHintOff", true);
+  startInPortrait();
+}
+
+/** 关掉引导但不进局：玩家可能只是想回藏身处换把枪 */
+function closeLandscapeHint() {
+  landscapeHint.value = false;
+}
+
+// 引导开着的时候把手机转横了，就当场放行 —— 这一步不该要玩家再点一次出征
+watch(
+  () => device.orientation,
+  (next) => {
+    if (landscapeHint.value && next !== "portrait") {
+      landscapeHint.value = false;
+      startRaid(true);
+    }
+  }
+);
 
 /**
  * 新局可能换了地图，旧场景一定要丢掉（几何是按 map 编译的）；视图偏好继续生效，
@@ -334,11 +399,46 @@ function setStick(x, y) {
   game?.setStick(x, y);
 }
 
+/**
+ * 手机＝和平精英式固定双摇杆：座子常显、钉在画布下沿两角，判定圈由 syncLayout 现场量座子得到。
+ * 平板/桌面不铺座子（量到 0×0 → `getPads()` 交 null → 输入层自动退回浮动摇杆），
+ * 那两档本来就有键盘，不该在战场上画两个大圈。
+ */
+const isFixedStickLayout = computed(() => device.device === "phone");
+
+/**
+ * 扳机只有一条规矩：按下与松开必须成对，任何中断路径（暂停、切视图、卸载、页面隐藏）
+ * 都要走这里补一次 false，否则恢复游戏就变成无限连发。
+ */
+function pressTrigger(pressed) {
+  triggerHeld.value = Boolean(pressed);
+  game?.setTrigger(triggerHeld.value);
+}
+
+/** 外圈以按下点为心（浮动档），旋钮按输入层夹过的位移贴过去；固定座档原点点就是座心，同一套偏移照用 */
+const stickStyle = computed(() => ({
+  left: `${stickPad.originX}px`,
+  top: `${stickPad.originY}px`,
+  width: `${stickPad.radius * 2}px`,
+  height: `${stickPad.radius * 2}px`,
+}));
+const knobStyle = computed(() => ({
+  transform: `translate(calc(-50% + ${stickPad.knobX - stickPad.originX}px), calc(-50% + ${stickPad.knobY - stickPad.originY}px))`,
+}));
+const lookKnobStyle = computed(() => ({
+  transform: `translate(calc(-50% + ${lookPad.knobX - lookPad.originX}px), calc(-50% + ${lookPad.knobY - lookPad.originY}px))`,
+}));
+
 function pause() {
   if (phase.value !== "playing") return;
   phase.value = "paused";
   setStick(0, 0);
-  lookRate = 0;
+  pressTrigger(false);
+  lookKeyRate = 0;
+  lookStickRate = 0;
+  // 暂停后没人再消费摇杆量：两枚座的旋钮必须弹回中心，否则恢复第一眼看到的就是"还推着"
+  stickPad.active = false;
+  lookPad.active = false;
   // 暂停期间没人消费待消化转向，重新声明一次视图模式把它清空，免得恢复时突然回头
   game?.setViewMode(viewMode.value);
 }
@@ -407,6 +507,11 @@ async function ensureThreeView(canvas) {
 
 /** 键盘转向角速度：9 rad/s ≈ 516°/s，够追上冲过来的近身，又不至于一点就转半圈 */
 const LOOK_KEY_RATE = 9;
+/**
+ * 右摇杆满偏角速度：5.5 rad/s ≈ 315°/s。比键盘慢是因为拇指推满是"贴着屏幕划到座沿"，
+ * 全程满偏的手势比按一个键长得多，快了会直接转过头；死区内的微量由输入层归零。
+ */
+const LOOK_STICK_RATE = 5.5;
 
 /**
  * 切换视图。失败（无 WebGL/老设备）不改变游戏，只把原因写进提示条并保持俯视，
@@ -472,8 +577,10 @@ function pump(ts) {
   last = ts;
   if (dt <= 0) return;
   if (dt > CATCHUP_SEC) dt = CATCHUP_SEC;
-  // 键盘转向按 dt 积分成"这一帧转多少弧度"，塞进引擎的待消化转向；拖动转向在 onLook 里已经直接塞过
-  if (lookRate !== 0 && viewMode.value === "fps") game.setLook(lookRate * LOOK_KEY_RATE * dt);
+  // 转向速率按 dt 积分成"这一帧转多少弧度"，塞进引擎的待消化转向。
+  // 俯视现在也吃这条通道（站着不动只转身 = 右下那枚摇杆）；拖动转向在 onLook 里已经直接塞过。
+  if (lookKeyRate !== 0) game.setLook(lookKeyRate * LOOK_KEY_RATE * dt);
+  if (lookStickRate !== 0) game.setLook(lookStickRate * LOOK_STICK_RATE * dt);
   // 引擎单次 step 最多消化 0.05 秒，被节流的定时器要切片补上，否则慢放成静态
   let left = dt;
   do {
@@ -521,6 +628,25 @@ function watchdog() {
   pump(now);
 }
 
+/**
+ * 量两枚固定摇杆座（画布内 CSS 像素，含半径）。座子的位置与大小唯一来源是 CSS：
+ * 只有手机档（横屏与竖屏）把它们 display 打开，平板/桌面 rect 恒 0×0 → 返回 null，
+ * 输入层随即退回"按在哪长在哪"的浮动摇杆。这样判定圈与画出来的圈永远同一个圆，
+ * 不会出现看得见的在左下角、摸得到的在屏幕中间。
+ */
+function measureSeats(canvas) {
+  const c = canvas.getBoundingClientRect();
+  const seatOf = (el) => {
+    if (!el) return null;
+    const box = el.getBoundingClientRect();
+    if (box.width < 24 || box.height < 24) return null;
+    return { x: box.left - c.left + box.width / 2, y: box.top - c.top + box.height / 2, r: Math.min(box.width, box.height) / 2 };
+  };
+  const move = seatOf(moveSeatEl.value);
+  const look = seatOf(lookSeatEl.value);
+  return move && look ? { move, look } : null;
+}
+
 function syncLayout() {
   const stage = stageEl.value;
   const canvas = canvasEl.value;
@@ -547,6 +673,18 @@ function syncLayout() {
   const css = canvasBox(layout, box);
   canvas.style.width = `${css.width}px`;
   canvas.style.height = `${css.height}px`;
+  // 摇杆圈要按画布原点定位：横屏 full-bleed 后画布两侧仍有留白，用 .stack 的原点会偏
+  boardBox.value = { width: css.width, height: css.height };
+  padRigs.value = measureSeats(canvas);
+  /**
+   * `.padlayer` 的宽高是绑在 boardBox 上的，Vue 要到下一拍才把它写进 DOM ——
+   * 而座子是按 `.padlayer` 的下沿定位的，所以在这一拍立刻量会拿到**上一版盒子**里的座子，
+   * 转屏/重开局那一下判定圆就会整体偏移（实测座心 72 报成 87.5）。
+   * 先按现状量一次保证任何时候都有圆可用，再等 DOM 落地重量一次。
+   */
+  nextTick(() => {
+    if (canvas.isConnected) padRigs.value = measureSeats(canvas);
+  });
   ctx = setupCanvas(canvas, css);
   // 转向灵敏度按画布宽度归一：整屏宽拖动 ≈ 300°，手机行程短也能转到位
   lookRadPerPx = (Math.PI * 2 * LOOK_TAU_PER_WIDTH) / Math.max(120, css.width);
@@ -589,10 +727,24 @@ onMounted(() => {
     shouldHandle: () => phase.value === "playing" || phase.value === "paused",
     onStick: setStick,
     onAction,
-    // 第一人称的两条转向通道：拖动给像素增量（这里换算成弧度），键盘给档位（pump 里按 dt 积分）
+    // 转向的两条通道：拖动给像素增量（这里换算成弧度），键盘与右摇杆给速率（pump 里按 dt 积分）
     isFps: () => viewMode.value === "fps",
     onLook: (dxPx) => game?.setLook(dxPx * lookRadPerPx),
-    onLookRate: (dir) => { lookRate = dir; },
+    onLookRate: (dir, source) => {
+      // 来源分开记：键盘是 ±1 档位、摇杆是连续量，角速度不同；不带来源=全局归零（失焦/隐藏/卸载）
+      if (source === "stick") lookStickRate = dir;
+      else if (source === "key") lookKeyRate = dir;
+      else {
+        lookKeyRate = 0;
+        lookStickRate = 0;
+      }
+    },
+    // 摇杆可视化：坐标是画布 CSS 像素，按 zone 分流到两个座上画旋钮（都不吃触控）
+    onStickPad: (pad) => {
+      Object.assign(pad.zone === "look" ? lookPad : stickPad, pad);
+    },
+    // 固定双摇杆档（手机档，横屏与竖屏）才有；量不到座子就交 null，输入层退回浮动摇杆
+    getPads: () => padRigs.value,
   });
   rafId = requestAnimationFrame(frame);
   timerId = setInterval(watchdog, 100);
@@ -615,7 +767,15 @@ onMounted(() => {
 
 /** 切回前台：丢弃冻结期间的 rAF 排期，从当前时刻重新起算 */
 function onVisibility() {
-  if (document.hidden) return;
+  if (document.hidden) {
+    // 页面被切走后再也没有 pointerup 了：扳机与摇杆在这里自己收尾，回来才不会无限连发
+    pressTrigger(false);
+    stickPad.active = false;
+    lookPad.active = false;
+    lookKeyRate = 0;
+    lookStickRate = 0;
+    return;
+  }
   last = 0;
   lastPump = 0;
   cancelAnimationFrame(rafId);
@@ -654,10 +814,16 @@ onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", onVisibility);
   input?.unbind();
   input = null;
+  // unbind 里的 cancelAll 只清引擎侧向量；扳机与摇杆是 DOM 态，这里自己收尾
+  triggerHeld.value = false;
+  stickPad.active = false;
+  lookPad.active = false;
+  padRigs.value = null;
   // WebGL 资源挂在 GPU 上下文上，不 dispose 就是每次进出局泄漏一张场景
   threeView?.dispose();
   threeView = null;
-  lookRate = 0;
+  lookKeyRate = 0;
+  lookStickRate = 0;
   audio?.dispose();
   audio = null;
   game?.destroy?.();
@@ -686,15 +852,48 @@ if (import.meta.env.DEV) {
       orientation: document.documentElement.dataset.orientation,
       raid: { ...rect(raid), position: raid ? getComputedStyle(raid).position : null },
       stack: rect(stackEl.value),
-      pads: rect(document.querySelector(".pads")),
+      pads: { ...rect(document.querySelector(".pads")), position: getComputedStyle(document.querySelector(".pads")).position, pointerEvents: getComputedStyle(document.querySelector(".pads")).pointerEvents },
       canvas: rect(canvasEl.value),
       glCanvas: rect(glCanvasEl.value),
+      /** 浮层化之后画布必须铺满可用高度，控制带不再占位；这两条是"有没有 full-bleed"的判据 */
+      padsHeightVar: getComputedStyle(document.querySelector(".stage")).getPropertyValue("--pads-h").trim(),
+      /** 两枚固定座与浮动圈的盒子：手机档两座必须都在画面下沿（横屏贴屏幕、竖屏贴画布），量不到就是没铺双摇杆 */
+      seatMove: rect(moveSeatEl.value),
+      seatLook: rect(lookSeatEl.value),
+      floatingStick: rect(document.querySelector(".stick:not(.seat)")),
+      /** 输入层实际拿到的判定圆（画布内坐标）：与座子盒子对不上就是"看得见摸不着" */
+      rigs: padRigs.value ? JSON.parse(JSON.stringify(padRigs.value)) : null,
       buttons: [...document.querySelectorAll(".pads .act")].map((b) => {
         const r = b.getBoundingClientRect();
         const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
         return { label: b.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height), hit: hit === b || b.contains(hit) };
       }),
+      /** 空白处必须还给画布：浮层容器若吃掉触控，摇杆与转身当场失效 */
+      bareCanvasHit: (() => {
+        const el = canvasEl.value;
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        const probe = document.elementFromPoint(r.left + r.width * 0.25, r.top + r.height * 0.5);
+        return probe === el || el.contains(probe);
+      })(),
     };
+  };
+  /** 摇杆可视化与扳机态：验证"推上就前进""推右就转身""按住才开火"时要能同时读到 DOM 与引擎两侧 */
+  window.deltaStick = () => ({
+    dom: { move: { ...stickPad }, look: { ...lookPad } },
+    rigs: padRigs.value ? JSON.parse(JSON.stringify(padRigs.value)) : null,
+    rates: { key: lookKeyRate, stick: lookStickRate },
+    engine: game ? { stick: { ...game.stick }, angle: game.player.angle, turned: game.turnedThisStep } : null,
+  });
+  window.deltaLook = (dir) => {
+    if (dir === undefined) return { key: lookKeyRate, stick: lookStickRate, angle: game?.player.angle ?? null, pending: game?.lookPending ?? null };
+    // 探针直接写速率变量（与输入层回调同一个落点），不冒充回调函数
+    lookStickRate = Math.max(-1, Math.min(1, Number(dir) || 0));
+    return { stick: lookStickRate, angle: game?.player.angle ?? null, pending: game?.lookPending ?? null };
+  };
+  window.deltaTrigger = (pressed) => {
+    pressTrigger(pressed);
+    return { dom: triggerHeld.value, engine: game ? game.triggerHeld : null };
   };
   /** 脚本里切视图与读视图状态：WebGL 起没起来、当前哪个视图，验证时都要能观测到 */
   window.deltaSetView = (mode) => setView(mode);
@@ -855,10 +1054,11 @@ if (import.meta.env.DEV) {
         </div>
       </div>
       <p class="muted small rules">
-        拖动屏幕（或 <kbd>WASD</kbd>）移动 · 轻点画布（或 <kbd>F</kbd>）搜刮 · <kbd>空格</kbd> 开关自动开火 ·
+        拖动屏幕（或 <kbd>WASD</kbd>）移动 · 轻点画布（或 <kbd>F</kbd>）搜刮 · <b>按住"开火"键</b>射击（<kbd>空格</kbd> 切换自动开火）·
         <kbd>R</kbd> 换弹 · <kbd>H</kbd> 打药 · <kbd>Q</kbd> 技能 · <kbd>P</kbd> 暂停 · 站进绿圈 5 秒撤离。<b>阵亡或超时会丢掉身上全部装备与货物，只有保险箱留得住。</b>
         <br>
-        <kbd>V</kbd> 或"第一人称"按钮切换视角：第一人称下左半屏拖动走路、右半屏拖动转身（<kbd>←</kbd> <kbd>→</kbd> 也能转身），左上角保留俯视小地图。
+        <kbd>V</kbd> 或"第一人称"按钮切换视角：第一人称下左半屏走路、右半屏转身（<kbd>←</kbd> <kbd>→</kbd> 也能转身），左上角保留俯视小地图。俯视下站着不动也能只用右摇杆转身。
+        <template v-if="isFixedStickLayout"><br>手机端＝和平精英式双摇杆：两枚座子<b>默认就显示</b>在画面下沿的左右两角（横屏贴屏幕下沿），位置钉死不会跟着手指跑 —— 左杆推=前进后退/横移，右杆推=转身（只认左右，上下不影响，这引擎没有俯仰）；座子之外的右半屏照样能拖动细瞄，横屏时右侧中部那枚圆钮按住就开火。</template>
       </p>
     </div>
 
@@ -867,6 +1067,21 @@ if (import.meta.env.DEV) {
         <canvas ref="glCanvasEl" v-show="viewMode === 'fps'" class="board gl"></canvas>
         <canvas ref="canvasEl" class="board" :class="{ overlay: viewMode === 'fps' }"></canvas>
         <div v-if="viewMode === 'fps'" class="crosshair" aria-hidden="true"><i></i><b></b></div>
+        <!-- 摇杆与分区提示只"画"在画面上：pointer-events:none，手指照样落在画布上 -->
+        <div class="padlayer" :style="{ width: `${boardBox.width}px`, height: `${boardBox.height}px` }">
+          <!-- 平板/桌面（没有固定座）：浮动摇杆，按在哪长在哪 -->
+          <div v-if="stickPad.active && !isFixedStickLayout" class="stick" :style="stickStyle" aria-hidden="true">
+            <b :style="knobStyle"></b>
+          </div>
+          <!-- 手机＝和平精英那套：两枚座子常显并钉在画布下沿两角，左手前进后退、右手转身，
+               座子不动、旋钮跟手指；判定圈由 syncLayout 量这两枚元素得到，画与摸同一个圆 -->
+          <div ref="moveSeatEl" class="stick seat" :class="{ on: stickPad.active }" aria-hidden="true">
+            <b :style="knobStyle"></b><span>移动</span>
+          </div>
+          <div ref="lookSeatEl" class="stick seat look" :class="{ on: lookPad.active }" aria-hidden="true">
+            <b :style="lookKnobStyle"></b><span>转身</span>
+          </div>
+        </div>
       </div>
 
       <div class="top">
@@ -881,18 +1096,35 @@ if (import.meta.env.DEV) {
       <div v-if="hud.pulse" class="pulse">脉冲标记中</div>
 
       <div class="pads">
-        <button class="act" :class="{ on: viewMode === 'fps' }" type="button" @click="toggleView">
-          {{ viewMode === 'fps' ? '俯视' : '第一人称' }}
-        </button>
-        <button class="act" type="button" @click="onAction('interact')">搜刮</button>
-        <button class="act" type="button" @click="onAction('reload')">换弹</button>
-        <button class="act" type="button" @click="onAction('med')">打药 {{ hud.meds }}</button>
-        <button class="act" :disabled="!hud.skill || hud.skill.usesLeft <= 0 || hud.skill.cooldown > 0" type="button" @click="onAction('skill')">
-          {{ hud.skill ? `${hud.skill.label} ${hud.skill.usesLeft}` : '技能' }}
-        </button>
-        <button class="act" :class="{ on: hud.fireEnabled }" type="button" @click="onAction('fire-toggle')">开火</button>
-        <button class="act" type="button" @click="pause">暂停</button>
-        <button class="act quit" type="button" @click="quitRaid">返回</button>
+        <div class="cluster nav">
+          <button class="act" :class="{ on: viewMode === 'fps' }" type="button" @click="toggleView">
+            {{ viewMode === 'fps' ? '俯视' : '第一人称' }}
+          </button>
+          <button class="act" type="button" @click="pause">暂停</button>
+          <button class="act quit" type="button" @click="quitRaid">返回</button>
+        </div>
+        <div class="cluster fight">
+          <button class="act" type="button" @click="onAction('interact')">搜刮</button>
+          <button class="act" type="button" @click="onAction('med')">打药 {{ hud.meds }}</button>
+          <button class="act" type="button" @click="onAction('reload')">换弹</button>
+          <button class="act" :disabled="!hud.skill || hud.skill.usesLeft <= 0 || hud.skill.cooldown > 0" type="button" @click="onAction('skill')">
+            {{ hud.skill ? `${hud.skill.label} ${hud.skill.usesLeft}` : '技能' }}
+          </button>
+          <!-- 按住才开火（吃鸡那套扳机）：抬手、手指滑出、系统中断都算松手，漏一次就是无限连发 -->
+          <button
+            class="act fire"
+            :class="{ held: triggerHeld }"
+            type="button"
+            @pointerdown.prevent="pressTrigger(true)"
+            @pointerup="pressTrigger(false)"
+            @pointercancel="pressTrigger(false)"
+            @pointerleave="pressTrigger(false)"
+            @contextmenu.prevent
+          >
+            <span class="fire-label">开火</span>
+            <span class="fire-mag">{{ hud.mag }}</span>
+          </button>
+        </div>
       </div>
 
       <p v-if="message" class="msg stage-msg">{{ message }}</p>
@@ -933,6 +1165,20 @@ if (import.meta.env.DEV) {
         <p class="chip">经验 +{{ ledger.xpGained }} · 柯尔 {{ ledger.walletDelta >= 0 ? '+' : '' }}{{ ledger.walletDelta }} · 当前 {{ money(save.wallet) }}</p>
         <div class="cta">
           <button class="primary" type="button" @click="backToLobby">回藏身处</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 竖屏出征前的横屏引导：fixed 盖住整屏（藏身处是流式布局，.cover 那套 absolute 在这儿不生效） -->
+    <div v-if="landscapeHint" class="rotate-hint" role="dialog" aria-modal="true" aria-label="建议转成横屏">
+      <div class="panel">
+        <h2>建议转成横屏</h2>
+        <p class="muted">横屏画布铺满整屏，比竖屏那条控制带多看 36% 战场；左下摇杆座走路、右下摇杆座转身，右侧中部那枚圆钮按住就开火。</p>
+        <p class="muted small">网页不能替你锁定方向：请在系统里打开自动旋转，或直接把手机转横 —— 转过来就立刻进局。竖屏照样能玩，两枚座子一样钉在画面下沿、位置不动。</p>
+        <button class="primary" type="button" @click="startInPortrait">继续竖屏进入</button>
+        <div class="row">
+          <button class="ghost" type="button" @click="neverAskLandscapeHint">不再提示并进入</button>
+          <button class="ghost" type="button" @click="closeLandscapeHint">先回藏身处</button>
         </div>
       </div>
     </div>
@@ -1385,6 +1631,110 @@ kbd {
   color: #f87171;
 }
 
+/* 竖屏/平板/桌面用 display:contents：按钮直接落进 .pads 那张网格里，分区只是 DOM 语义 */
+.cluster {
+  display: contents;
+}
+
+/* 摇杆画在画布之上、控件之下：它自己不吃触控，坐标原点与画布左上角对齐 */
+.padlayer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  pointer-events: none;
+}
+
+.stick {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 1.5px solid rgba(230, 240, 250, 0.34);
+  background: rgba(10, 15, 24, 0.22);
+}
+
+.stick b {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(126, 231, 135, 0.46);
+  border: 1.5px solid rgba(230, 240, 250, 0.72);
+}
+
+/*
+ * 固定摇杆座（手机的两枚）：非手机档位不显示 —— 平板/桌面量到 0×0，
+ * measureSeats 直接交 null，输入层就退回"按在哪长在哪"的浮动摇杆（那两档有键盘）。
+ * 座子的直径就是判定半径×2（syncLayout 量的正是这个盒子），画与摸同一个圆。
+ */
+.stick.seat {
+  display: none;
+  transform: none;
+  width: 128px;
+  height: 128px;
+}
+
+.stick.seat span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: rgba(230, 240, 250, 0.42);
+}
+
+/* 按下时座子亮一点，玩家知道这根手指归哪个摇杆管 */
+.stick.seat.on {
+  border-color: rgba(230, 240, 250, 0.6);
+  background: rgba(10, 15, 24, 0.4);
+}
+
+.stick.seat.on span {
+  color: rgba(230, 240, 250, 0.62);
+}
+
+.fire {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.fire-mag {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.act.fire.held {
+  background: #f2703f;
+  border-color: #ffd6be;
+  color: #14100c;
+}
+
+/*
+ * 横屏引导层：藏身处是流式布局、全屏层 .raid 是 fixed，两种形态都要被压住，
+ * 所以它自己只能 fixed，z-index 高过 .raid。竖屏时它出现在屏幕正中，
+ * 玩家转成横屏由 watch(device.orientation) 当场放行，不必再点一次出征。
+ */
+.rotate-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(6, 10, 17, 0.82);
+}
+
+.rotate-hint .panel {
+  max-width: min(420px, 92%);
+}
+
 .cover {
   position: absolute;
   inset: 0;
@@ -1474,13 +1824,122 @@ html[data-device="phone"] .pads {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-/* 横屏手机高度太矮（≈390 px），两行控制带会吃掉三分之一屏幕，改回一行 */
+/*
+ * 手机横屏＝和平精英式双摇杆（有意推翻"控制带不进浮层"的旧结论，理由记在 docs/rules/delta.md）：
+ * 旧版是一条 56 px 控制带 —— 画布被顶到 334 px 高、8 个等宽小格排一行、开火只是"切换"、
+ * 摇杆完全看不见。横屏本来就只有 390 px 高，再让出一条带等于把战场压成缩略图。
+ * 现形态：画布 full-bleed（--pads-h: 0）＋ 两枚摇杆座钉在屏幕下沿 ＋ 右侧中部开火圆钮。
+ * 命门有两条：① .pads 容器 pointer-events:none、按钮各自 auto —— 空白处仍然归画布；
+ * ② 判定圈由 syncLayout 量这两枚座子得到 —— 看得见的圆和摸得到的圆是同一个，
+ *    绝不出现"控件在中间、拇指在底下"。
+ */
 html[data-device="phone"][data-orientation="landscape"] .stage {
-  --pads-h: 56px;
+  --pads-h: 0px;
 }
 
 html[data-device="phone"][data-orientation="landscape"] .pads {
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  position: absolute;
+  inset: 0;
+  height: auto;
+  display: block;
+  gap: 0;
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+html[data-device="phone"][data-orientation="landscape"] .cluster {
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+/* 导航簇（视角/暂停/返回）在左上，HUD 标签整排下移让位；小地图仍在右上角不动 */
+html[data-device="phone"][data-orientation="landscape"] .cluster.nav {
+  position: absolute;
+  left: calc(8px + env(safe-area-inset-left));
+  top: calc(8px + env(safe-area-inset-top));
+}
+
+html[data-device="phone"][data-orientation="landscape"] .cluster.nav .act {
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: 12px;
+  background: rgba(14, 21, 34, 0.78);
+}
+
+html[data-device="phone"][data-orientation="landscape"] .top {
+  top: 58px;
+}
+
+/*
+ * 手机＝两枚座子常显、位置钉死（和平精英那套）：竖屏贴在画布下沿左右两角 —— 控制带在画布下方
+ * 另占一条 106 px，两者的盒子不重叠；横屏画布铺满整屏，座子就是屏幕下沿。
+ * 判定圈由 syncLayout 量这两枚盒子得到，所以改这里的 left/bottom/width 就自动改了手感。
+ */
+html[data-device="phone"] .stick.seat {
+  display: block;
+  left: calc(8px + env(safe-area-inset-left));
+  bottom: calc(8px + env(safe-area-inset-bottom));
+}
+
+html[data-device="phone"] .stick.seat.look {
+  left: auto;
+  right: calc(8px + env(safe-area-inset-right));
+}
+
+/* 横屏拇指根落在屏幕角上，座子往外让 6 px 并按安全区避让（特异度必须压过上面那条 .look） */
+html[data-device="phone"][data-orientation="landscape"] .stick.seat {
+  left: calc(14px + env(safe-area-inset-left));
+  bottom: calc(14px + env(safe-area-inset-bottom));
+}
+
+html[data-device="phone"][data-orientation="landscape"] .stick.seat.look {
+  left: auto;
+  right: calc(14px + env(safe-area-inset-right));
+}
+
+/* 功能键 2×2 ＋ 右侧中部开火：整簇抬到转身座上方，互不吃触控（和平精英的开火就在这个位置） */
+html[data-device="phone"][data-orientation="landscape"] .cluster.fight {
+  position: absolute;
+  right: calc(14px + env(safe-area-inset-right));
+  bottom: calc(150px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: repeat(2, 50px) 84px;
+  grid-template-rows: repeat(2, 50px);
+  gap: 8px;
+}
+
+html[data-device="phone"][data-orientation="landscape"] .cluster.fight .act {
+  width: 50px;
+  min-height: 50px;
+  padding: 0;
+  border-radius: 14px;
+  font-size: 12px;
+  background: rgba(14, 21, 34, 0.78);
+}
+
+html[data-device="phone"][data-orientation="landscape"] .cluster.fight .act.fire {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  flex-direction: column;
+  gap: 0;
+  font-size: 13px;
+  background: rgba(217, 84, 43, 0.82);
+  border-color: rgba(255, 214, 190, 0.55);
+}
+
+/* 提示条改贴左下、且抬到移动座上方：居中会把身体压到座子上，贴着底边又会被拇指盖住 */
+html[data-device="phone"][data-orientation="landscape"] .stage-msg {
+  left: calc(14px + env(safe-area-inset-left));
+  transform: none;
+  text-align: left;
+  max-width: 42%;
+  bottom: calc(150px + env(safe-area-inset-bottom));
 }
 
 /* 暂停/结算面板里的幽灵按钮：默认 32 px 高在手机上只有 33 px 实测触点，够不上拇指 */
