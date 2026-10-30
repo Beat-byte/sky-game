@@ -56,6 +56,16 @@ export const GAMES = [
     status: "ready",
     load: () => import("./birds/BirdsView.vue"),
   },
+  {
+    id: "airbattle",
+    name: "飞机大战",
+    subtitle: "拖动—弹幕—闯关：恒定 9×16 单位空域，六关手写编成，火力与炸弹全靠掉落。",
+    tags: ["射击", "单指操作", "6 关卡"],
+    mark: "机",
+    accent: "#ffd166",
+    status: "ready",
+    load: () => import("./airbattle/AirbattleView.vue"),
+  },
 ];
 
 export function findGame(id) {

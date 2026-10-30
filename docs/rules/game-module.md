@@ -1,7 +1,8 @@
 # 游戏模块分工、主循环与恒定难度
 
 改任何一款游戏的引擎或视图前先读这份。危险行动的双视图专属规矩另见 [delta.md](delta.md)，
-愤怒的小鸟的求解器/材质/关卡/几何地板另见 [birds.md](birds.md)。
+愤怒的小鸟的求解器/材质/关卡/几何地板另见 [birds.md](birds.md)，
+飞机大战的空域单位/编成表/火力与炸弹另见 [airbattle.md](airbattle.md)。
 
 ## 模块边界
 - 游戏引擎模块必须保持**框架无关**（纯 ES Module，不 import vue）；只有 `*.vue` 装配层允许依赖 Vue。
@@ -19,9 +20,10 @@
 ## 主循环：rAF 为主 + 非 rAF 驱动源兜底
 - **只挂 rAF 等于没做兜底**（内置浏览器 hidden 页面里 rAF 一帧都不走，实测数据见
   [browser-verify.md](browser-verify.md)）。
-- delta 与 birds 各带一份 `tick.js`（`src/games/delta/tick.js`、`src/games/birds/tick.js`，
-  Vite `new Worker(new URL(..., import.meta.url), {type:"module"})`）按 60 Hz 发 `postMessage` 心跳，
-  主线程收到就 `pump(performance.now())`。
+- delta、birds、airbattle 各带一份 `tick.js`（`src/games/delta/tick.js`、`src/games/birds/tick.js`、
+  `src/games/airbattle/tick.js`，Vite `new Worker(new URL(..., import.meta.url), {type:"module"})`）按 60 Hz 发 `postMessage` 心跳，
+  主线程收到就 `pump(performance.now())`。三份的 Worker 代码一致（只有头注释措辞不同），**但刻意不抽成公共模块**：
+  抽出去就等于让三个互不引用的游戏目录依赖同一个文件，打破"加一款只动一个目录"的边界。改心跳协议要三处一起改。
 - 三个驱动源（rAF / Worker / setInterval 看门狗）**共用同一条 `pump` 和同一个时间游标 `last`**，
   所以谁先到达都只按真实流逝推进，不会翻倍。
 - Worker 心跳只在 `phase === "playing"` 期间启动（`postMessage("start"/"stop")`），卸载必须 `terminate()`。
@@ -39,6 +41,10 @@
 - 连续物理的另一份实现是愤怒的小鸟：**横向可见米数恒 15 m**（`ppm` 只决定画多大、不参与判定），
   发射功率按**屏幕行程**归一（`pullRef = min(css.w, css.h) × 0.13`，地板 28 px），
   否则小屏必须拖更长才打得远，等于变相惩罚手机玩家。
+- 恒定口径做得最强的是飞机大战：空域直接写成**离散单位** `FIELD = 9 × 16`，长宽比钉死，三端靠 `fitBoard`
+  内接成 letterbox，看到的横向 9 单位、纵向 16 单位完全一样；`unit = css.width / 9` 只决定"一单位画多少像素"，
+  速度、半径、火力、掉落全部以单位与秒为单位。**拖动输入报的是相对单位增量（像素 ÷ `unit`）**，
+  与小鸟的 `pullRef` 是同一个问题的同一个解法：屏幕小不等于要拖更长才打得远。
 - 渲染层能读 `metricsFor` 的只有线宽/字号/小地图边长这类装饰量；
   任何"手机上画小一点所以更难看见"都不允许。
 
@@ -54,4 +60,9 @@
 - 愤怒的小鸟 `window.birds` / `window.birdsLayout` / `window.birdsCamera` / `window.birdsRelayout` /
   `window.birdsLevel(i)` / `window.birdsShoot(power, angle)` / `window.birdsBoxes`（同一套逐按钮命中，
   细节见 [birds.md](birds.md)）
+- 飞机大战 `window.airbattle` / `window.airbattleLayout` / `window.airbattleRelayout` /
+  `window.airbattleAdvance(frames, ms)`（hidden 页面里唯一能把六关跑完的办法）/
+  `window.airbattleMove(dxUnits, dyUnits)`（回读 `ship` 与 `target`，用来证明拖动是单位语义）/
+  `window.airbattleBomb()` / `window.airbattleLevel(i)` / `window.airbattleBoxes`（同一套逐按钮命中 +
+  `unit`/`view`/`sideScroll`/`bareCanvasHit`，细节见 [airbattle.md](airbattle.md)）
 - 新增视图能力时同步补钩子：验证只能靠可观测信号，没有钩子就等于没法验收。

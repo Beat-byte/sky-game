@@ -26,9 +26,10 @@
 泵帧时间戳必须**递增且大于挂载时的 `performance.now()`**（例如从 `1e7` 起每帧 `+16.7`）：
 恒定时间戳会让 delta 为 0，递增不足则被 View 里的负 delta 夹成 0，游戏看着不动。
 
-**带 Worker 心跳的两款（delta、birds）不需要这套接管**：DEV 钩子里
-`birdsLevel(i)` / `deltaFrames` 之类一开局，`watch(status)` 就把心跳点起来，hidden 页面照样 60 Hz 推进
-（2026-10-28 实测 birds `game.elapsed` / `performance.now()` = 1.003）。
+**带 Worker 心跳的三款（delta、birds、airbattle）不需要这套接管**：DEV 钩子里
+`birdsLevel(i)` / `airbattleLevel(i)` / `deltaFrames` 之类一开局，`watch(status)` 就把心跳点起来，hidden 页面照样 60 Hz 推进
+（2026-10-28 实测 birds `game.elapsed` / `performance.now()` = 1.003；
+2026-10-30 实测 airbattle `game.timeSec` / `performance.now()` = **1.000**，另配 `airbattleAdvance(frames)` 手动喂帧跑完整六关）。
 只挂 rAF 的旧三款（弹球 / 贪吃蛇 / 方块堆叠）在 hidden 页面里画布必然全黑（实测 `lit = 0`），
 那不是回归，是没泵帧。
 

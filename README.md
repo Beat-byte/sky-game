@@ -1,11 +1,12 @@
 # 像素游戏厅 · 多游戏合集
 
-Vue 3 + Vite 的单页应用：首页汇总所有游戏，点卡片进入对应游戏页。当前上线五款游戏——
+Vue 3 + Vite 的单页应用：首页汇总所有游戏，点卡片进入对应游戏页。当前上线六款游戏——
 「像素弹球」（HTML5 Canvas 打砖块：5 个手工关卡、6 种道具、连击计分、粒子与震屏反馈）、
 「像素贪吃蛇」（260 格恒定棋盘、8 档提速、横竖屏互为转置）、
 「方块堆叠」（七种方块 7 袋随机、锁定宽限期、踢墙、暂存、无限关卡）、
-「危险行动」（搜刮撤离：俯视 + Three.js 第一人称双视图、六态状态机 AI、CIELAB 可辨识色板）与
-「愤怒的小鸟」（弹弓抛物拆塔：自研确定性刚体求解器、四种材质 + TNT 连锁、六关手写战场）。
+「危险行动」（搜刮撤离：俯视 + Three.js 第一人称双视图、六态状态机 AI、CIELAB 可辨识色板）、
+「愤怒的小鸟」（弹弓抛物拆塔：自研确定性刚体求解器、四种材质 + TNT 连锁、六关手写战场）与
+「飞机大战」（拖动—弹幕—闯关：恒定 9×16 单位空域、六关手写编成、四档火力与全屏炸弹全靠掉落）。
 每款都是"纯逻辑引擎 + 一个 Vue 装配层"，加进首页只靠注册表的一条记录。
 
 ## 项目信息
@@ -19,8 +20,8 @@ Vue 3 + Vite 的单页应用：首页汇总所有游戏，点卡片进入对应�
 | 开发服务 | **5173** → http://localhost:5173（`npm run dev`；被占用自动顺延端口） |
 | 预览服务 | **4173** → http://localhost:4173（`npm run build && npm run preview`，同样被占用则顺延） |
 | 运行记录 | `.dev-server.json`（模式、进程号、端口、地址），日志 `.dev-logs/server.log` |
-| 单元测试 | `npm test`（Node 内置 `node --test`，178 个用例：五款游戏的引擎层 + 几何档位 + 存储层 + 站点图标生成器，全部与框架无关） |
-| 生产体积 | 首页入口 `index.js` gzip 39.61 kB（含 vue + vue-router）；五款各自独立分包：弹球 9.35 kB、贪吃蛇 6.93 kB、方块堆叠 9.51 kB、危险行动 34.33 kB（第一人称的 `three-view` 再 133.87 kB，只在切到 fps 时下载）、愤怒的小鸟 16.63 kB |
+| 单元测试 | `npm test`（Node 内置 `node --test`，219 个用例：六款游戏的引擎层 + 几何档位 + 存储层 + 站点图标生成器，全部与框架无关） |
+| 生产体积 | 首页入口 `index.js` gzip 39.80 kB（含 vue + vue-router）；六款各自独立分包：弹球 9.35 kB、贪吃蛇 6.93 kB、方块堆叠 9.51 kB、危险行动 34.33 kB（第一人称的 `three-view` 再 133.87 kB，只在切到 fps 时下载）、愤怒的小鸟 16.63 kB、飞机大战 11.55 kB |
 | 玩家数据 | 浏览器本地 `localStorage`（键前缀 `sky-games:`）：最高分、累计局数、最近 20 局战绩、静音等偏好 |
 | 静态托管 | GitHub Pages（`actions/deploy-pages`）；站点前缀由 `VITE_BASE` 注入，`dist/404.html` 充当 SPA 回退。见「静态托管到 GitHub Pages」 |
 
@@ -76,7 +77,7 @@ npm run stop       # 关闭
 npm run restart    # 重启
 npm run status     # 地址、端口、进程号、模式
 npm run logs       # 最近 30 行日志
-npm test           # node --test test/，178 个用例（五款游戏引擎层 + 几何档位 + 存储层 + 图标生成器）
+npm test           # node --test test/，219 个用例（六款游戏引擎层 + 几何档位 + 存储层 + 图标生成器）
 npm run icons      # 改了 scripts/gen-icons.mjs 的像素矩阵后，重新生成 public/ 里三个图标
 ```
 
@@ -127,7 +128,9 @@ speedScale = height / 600        → 垂直穿越时间恒定
 
 弹球的场地是连续量，只能保证"垂直穿越时间"一致；贪吃蛇与方块堆叠是格子游戏，可以把恒定做得更强——
 **可见行列数与速度单位（格/秒）在三端完全相同**，屏幕大小只改变格子的像素边长；
-危险行动与愤怒的小鸟同为连续量，恒定的是**米**：视野尺寸与所有物理量都不随档位变。
+危险行动与愤怒的小鸟同为连续量，恒定的是**米**：视野尺寸与所有物理量都不随档位变；
+飞机大战把恒定做到最强——空域直接写成**离散的 9×16 单位**，三端看到的横向 9、纵向 16 完全一样，
+只有"一单位画多少像素"随档位变。
 
 | 游戏 | 恒定量 | 随档位变化的量 | 旋转屏幕的代价 |
 | --- | --- | --- | --- |
@@ -136,6 +139,7 @@ speedScale = height / 600        → 垂直穿越时间恒定
 | 方块堆叠 | 场地恒定 10×20，16 档重力 0.9→0.1 s/格 | 格子边长与画布内两侧预览面板的可见性（`showPanels`） | 无需搬运局面（行列不变），只重算度量并 clamp 当前块 |
 | 危险行动 | 俯视恒 28×18 m、第一人称雾远界恒 28 m，速度与伤害不按视图分档；手机换成底部双摇杆（横屏与竖屏）也**不改视野米数** | 每米像素、WebGL 画布的垂直视场角（竖屏夹 80°）、控制键的排布（手机座子常显钉在画面下沿两角，横屏画布再铺满整屏） | `resolveViewport` 在窗口与容器盒子朝向打架时改用盒子，局内局面不动 |
 | 愤怒的小鸟 | 横向可见 15 m（`ppm = min(宽/15, 高/12)`），重力、材质、射程全用米与秒 | 每米像素、`pullRef`（画布短边 ×0.13，地板 28 px） | 只重算几何与相机；功率按屏幕行程归一，所以拖同样比例打同样远 |
+| 飞机大战 | 空域恒 **9×16 单位**（长宽比钉死，`fitBoard` 只做内接 letterbox），速度/半径/火力/掉落全用单位与秒，敌机从入场到出场几秒三端一样 | 每单位像素 `unit`（实测四档 42.89 / 24.11 / 39.33 / 56.89）、画布留边 letterbox、控制带排布 | 无需搬运局面：`resize()` 只登记档位与朝向，不参与任何判定，空域本来就不变 |
 
 - 蛇的转置是**可逆**的：竖→横用 `(x,y)→(旧行数-1-y, x)`、方向 `(dx,dy)→(-dy,dx)`；横→竖用它们的逆变换，
   所以横竖屏来回切三次也不会把蛇拧成 180°（`test/snake.test.js` 对这条有专门用例）。
@@ -151,7 +155,7 @@ speedScale = height / 600        → 垂直穿越时间恒定
 
 | 键 | 内容 | 写入时机 |
 | --- | --- | --- |
-| `sky-games:game:<id>` | `{ v, best, plays, records[] }`，`records` 每条含时间戳、分数、到达关卡（蛇记速度档）、用时、结局（`over`/`won`/`quit`） | **一局结束时一次写入**：弹球生命用尽、蛇撞墙或占满棋盘、方块堆到顶，以及任何游戏中途点返回或点「重开」 |
+| `sky-games:game:<id>` | `{ v, best, plays, records[] }`，`records` 每条含时间戳、分数、到达关卡（蛇记速度档）、用时、结局（`over`/`won`/`quit`） | **一局结束时一次写入**：弹球生命用尽、蛇撞墙或占满棋盘、方块堆到顶、飞机大战座机坠落或母舰被打掉（结算奖励算进分数、`level` 记到第几关），以及任何游戏中途点返回或点「重开」 |
 | `sky-games:global` | `{ v, prefs }`，目前记 `muted` | 点「静音」时 |
 | `pixel-breakout-best` | v1 的裸数字最高分 | 只读，首次读到就迁移进新结构（迁移出来的那条战绩标 `legacy`） |
 
@@ -182,7 +186,7 @@ speedScale = height / 600        → 垂直穿越时间恒定
 | 项目站挂在 `https://<用户>/<仓库>/` 子路径 | 产物里写 `/assets/xxx.js` → 打到域名根 → **白屏** | `vite.config.js` 读 `VITE_BASE` 决定 `base`；`createWebHistory(import.meta.env.BASE_URL)` |
 | Pages 没有服务端 SPA 回退 | 刷新或分享 `.../game/tetris` → **404** | 构建时额外产出 `dist/404.html`，把原始路径塞进 `?r=` 跳回站点根，路由在建 history 前还原 |
 
-发布走 `.github/workflows/deploy.yml`：`npm ci` → `npm test`（178 例） → `npm run build` →
+发布走 `.github/workflows/deploy.yml`：`npm ci` → `npm test`（219 例） → `npm run build` →
 `actions/upload-pages-artifact` + `actions/deploy-pages`。站点前缀按仓库名自动推导
 （`${{ github.event.repository.name }}`），**改仓库名或换托管位置都不用改代码**：
 
@@ -260,24 +264,27 @@ src/games/snake/                 游戏二「像素贪吃蛇」：SnakeView.vue 
 src/games/tetris/                游戏三「方块堆叠」：TetrisView.vue + game/pieces/layout/renderer/input/audio
 src/games/delta/                 游戏四「危险行动」：DeltaView.vue + game/map/loot/weapons/combat/ai/scene3d/three-view/renderer/input/audio/tick
 src/games/birds/                 游戏五「愤怒的小鸟」：BirdsView.vue + game/physics/levels/layout/renderer/input/audio/tick
-src/styles/playfield.css         手机端全屏层（弹球/贪吃蛇/方块堆叠/愤怒的小鸟共用）
+src/games/airbattle/             游戏六「飞机大战」：AirbattleView.vue + game/field/waves/layout/renderer/input/audio/tick
+src/styles/playfield.css         手机端全屏层（弹球/贪吃蛇/方块堆叠/愤怒的小鸟/飞机大战共用）
 src/utils/device.js              设备档位/朝向/视口测量
-test/                            单元测试（game / physics / layout / snake / tetris / delta / birds / store / icons）
+test/                            单元测试（game / physics / layout / snake / tetris / delta / delta-input / birds / airbattle / store / icons）
 dist/                            构建产物（可删，接入版本库请 gitignore）
 ```
 
 ## 如何新增一个游戏
 
 1. 建目录 `src/games/<id>/`，把框架无关的引擎模块放进去，再写一个 `<Id>View.vue` 作为装配层。
-   五款游戏的分工都一样：`game.js` 只碰状态（不 import vue、不碰 DOM/WebAudio/localStorage），
+   六款游戏的分工都一样：`game.js` 只碰状态（不 import vue、不碰 DOM/WebAudio/localStorage），
    `layout.js` 只算几何，`renderer.js` 只画，`input.js` 只翻译事件并返回 `{ unbind }`，
    `audio.js` 只合成音色，View 负责把主循环、HUD、战绩与生命周期清理串起来。
+   需要多几份纯数据就多开文件——飞机大战另带 `field.js`（空域与数值表）和 `waves.js`（六关手写编成），
+   它们是渲染与状态的唯一数值来源，`renderer.js` 不许复制数字。
 2. 在 `src/games/registry.js` 增加一条记录：`id`、`name`、`subtitle`、`tags`、`mark`、`accent`、
    `status: "ready"`、`load: () => import("./<id>/<Id>View.vue")`。只有从 v1 裸数字键继承数据时才需要
    额外的 `bestKey`（贪吃蛇与方块堆叠就没有，战绩从第一局开始记）。
 3. 在 `test/<id>.test.js` 给引擎层加用例——`node --test` 只跑得动纯逻辑，这也是"引擎必须框架无关"的回报。
 4. 完成。首页自动出现卡片，路由自动接受 `/game/<id>`，构建自动多出一个独立 chunk
-   （实测 gzip：弹球 9.35 / 贪吃蛇 6.93 / 方块堆叠 9.51 / 危险行动 34.33 / 愤怒的小鸟 16.63 kB，互不牵连）。
+   （实测 gzip：弹球 9.35 / 贪吃蛇 6.93 / 方块堆叠 9.51 / 危险行动 34.33 / 愤怒的小鸟 16.63 / 飞机大战 11.55 kB，互不牵连）。
 
 `/game/:id` 的 `beforeEnter` 会拦截未登记 id 并重定向首页，所以加记录即可访问，不需要改路由文件。
 `status: "soon"` 是留给"先占位、后实现"的：卡片会显示「敬请期待」且不可点，也不会被打包。
@@ -368,16 +375,36 @@ dist/                            构建产物（可删，接入版本库请 giti
 伤害只在"新接触"结算，所以静止的堆叠不会慢慢磨血；结构靠预沉降保证开局站得住。
 猪掉光即过关，**每只剩余鸟 5000 分**，省 2 只及以上评 3 星；星数与解锁写进跨局存档 `sky-games:save:birds`。
 
+### 飞机大战
+
+| 目标 | 桌面 / 平板 | 手机 |
+| --- | --- | --- |
+| 平移机身 | `↑` `↓` `←` `→` 或 `W` `A` `S` `D`（多键按住合成一个轴，松手与失焦立刻归零） | **画面任意处按住拖动**：机身按"拖了多少像素 ÷ 每单位像素"跟着走，松手停在原地 |
+| 开火 | 自动连射，不需要按键 | 同左（所以手机上不用第二个手指） |
+| 投弹 | `B` / `Shift` / 控制带「投弹」 | 控制带第一枚「投弹」 |
+| 开始、继续、再来一次 | 空格 / `Enter` / 轻点画布 | 轻点画布 / 覆盖层按钮 |
+| 暂停、重开、静音 | `P` `Esc` / `R` / `M` | 控制带其余三枚（`.side` 底部一条） |
+
+六关手写编成（边境巡逻 → 干扰编队 → 火力点突入 → 轰炸机航线 → 护航歼灭 → 母舰突袭，逐架展开 12/17/17/16/23/13 架）。
+敌机六种：`scout` 直线、`dart` 快速蛇形、`fighter` 会瞄你打、`gunner` 悬停点射、`bomber` 悬停双发、
+`boss`（只在第 6 关，64 血、三发扇形）。火力吃 `▲` 升一档（共 4 档，间隔 1.0→0.7 倍、弹道 1→4 条），
+吃 `+` 回 1 血（上限 5），吃 `●` 补 1 弹（上限 3）；道具只从敌机掉落，掉落由击坠序号派生，不是随机数。
+炸弹是全屏 8 点伤害 + 清空敌弹 + 0.9 秒无敌；撞击不是白撞——玩家掉 1 血的同时**敌机自己也掉 3 血**。
+连击每 3.2 秒内不击杀就清零，每阶 +2% 分数、封顶 20 阶。一关"打完"的条件是**编成放完且场上清空**，
+最后一关过关时按 `剩余生命 × 800 + 剩余炸弹 × 400` 结算奖励；生命归零则座机坠落，两种结局都会留档。
+
 ## 设计与已知限制
 
-五款游戏共用的约定：
+六款游戏共用的约定：
 
 - **逻辑与渲染分离**：`game.js` 不引用 DOM/WebAudio/localStorage/框架，因此单测与浏览器跑的是同一份代码，
-  无头模拟可直接用于平衡性检查（178 个用例全在 Node 里跑，小鸟整局都能在 Node 里喂帧打完）。
+  无头模拟可直接用于平衡性检查（219 个用例全在 Node 里跑，小鸟整局都能在 Node 里喂帧打完，
+  飞机大战的六关与 boss 结算用 `game.jumpTo(index)` 直接跳过去验）。
 - **帧率无关**：主循环只把 `deltaSeconds` 交给引擎，由引擎内部换算——弹球用 `stepScale` 折算成 60 帧
   基准步长并封顶 3；贪吃蛇与方块堆叠用时间累加器，并对单帧 delta 设上限（蛇 0.2 s、方块 0.05 s），
   所以切后台再回来不会一帧扣掉半张棋盘；危险行动与愤怒的小鸟用固定步长累加器
-  （小鸟 `FIXED_DT = 1/120`，每帧最多 12 子步），View 侧再夹 0.05 s。
+  （小鸟 `FIXED_DT = 1/120`，每帧最多 12 子步），View 侧再夹 0.05 s；
+  飞机大战是连续位移，View 的 `pump` 与引擎的 `clampDt` 两处都夹 0.05 s，宁可慢放也不让机身一帧穿进弹幕。
 - **输入契约**：`input.js` 一律返回 `{ unbind }`，装配层 `onBeforeUnmount` 里 `input?.unbind()`。
   这个形状必须统一——蛇曾经返回裸函数，导致离开页面时 `input.unbind is not a function` 抛错、
   视图卡在卸载中间，重复进出后监听翻倍。

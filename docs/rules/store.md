@@ -6,7 +6,7 @@
 
 | 键 | 结构 | 用途 |
 | --- | --- | --- |
-| `sky-games:game:<id>` | `{v, best, plays, records[]}` | 单局成绩（五款游戏都用） |
+| `sky-games:game:<id>` | `{v, best, plays, records[]}` | 单局成绩（六款游戏都用） |
 | `sky-games:global` | `{v, prefs}` | 全局偏好：`muted`、`deltaView`（危险行动视图）、`deltaLandscapeHintOff`（竖屏"请横屏"引导不再提示） |
 | `sky-games:save:<id>` | `{v, ...游戏自定义}` | 跨局资产（危险行动：仓库/货币/配装；愤怒的小鸟：`unlocked`/`stars`/`best`） |
 
